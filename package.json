@@ -1,0 +1,28 @@
+{
+  "name": "fleetlink-whatsapp-engine",
+  "version": "1.0.0",
+  "description": "WhatsApp-centric B2B Outstation Car Rental Dispatch Engine & Admin Dashboard",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
+    "jsonwebtoken": "^9.0.3",
+    "qrcode": "^1.5.4",
+    "whatsapp-web.js": "^1.34.7"
+  },
+  "keywords": [
+    "whatsapp-cloud-api",
+    "car-rental",
+    "fleet-management",
+    "dispatch-system"
+  ],
+  "author": "FleetLink Team",
+  "license": "MIT"
+}

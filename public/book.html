@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book an Outstation Cab | FleetLink</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .booking-page {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            padding: 2.5rem 1.25rem;
+        }
+        .booking-wrap {
+            width: 100%;
+            max-width: 620px;
+        }
+        .booking-brand {
+            text-align: center;
+            margin-bottom: 1.75rem;
+        }
+        .booking-brand .logo-icon {
+            font-size: 2.5rem;
+        }
+        .booking-brand h1 {
+            font-size: 1.6rem;
+            font-weight: 800;
+            margin-top: 0.5rem;
+        }
+        .booking-brand h1 span { color: var(--accent-indigo); }
+        .booking-brand p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-top: 0.35rem;
+        }
+        .booking-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 1.75rem;
+        }
+        .booking-card h2 {
+            font-size: 1.05rem;
+            margin-bottom: 1rem;
+        }
+        .quote-preview {
+            margin-top: 0.5rem;
+            margin-bottom: 1.25rem;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 12px;
+            padding: 1.1rem;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 0.85rem;
+            color: var(--accent-emerald);
+        }
+        .success-card {
+            text-align: center;
+            padding: 2.5rem 1.5rem;
+        }
+        .success-card .icon { font-size: 3rem; margin-bottom: 0.75rem; }
+        .success-card h2 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+        .success-card p { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 0.4rem; }
+        .success-card .ref-code {
+            display: inline-block;
+            margin: 0.75rem 0 1.25rem;
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: var(--accent-indigo);
+            background: rgba(99, 102, 241, 0.12);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            padding: 0.5rem 1rem;
+            border-radius: 10px;
+        }
+        .error-msg {
+            color: var(--accent-rose);
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+        }
+        @media (max-width: 600px) {
+            .form-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="booking-page">
+        <div class="booking-wrap">
+            <div class="booking-brand">
+                <div class="logo-icon">🚕</div>
+                <h1>FleetLink <span>Outstation Cabs</span></h1>
+                <p>Instant fare quote &amp; trip request &mdash; no account needed.</p>
+            </div>
+
+            <!-- Request Form -->
+            <div class="booking-card" id="request-panel">
+                <h2>Request Your Trip</h2>
+                <form id="request-form" onsubmit="submitRequest(event)">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Your Name</label>
+                            <input type="text" id="req-name" class="form-control" placeholder="e.g. Ramesh Kumar" required>
+                        </div>
+                        <div class="form-group">
+                            <label>WhatsApp Phone Number</label>
+                            <input type="text" id="req-phone" class="form-control" placeholder="+919876543210" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Pickup Location</label>
+                            <input type="text" id="req-pickup" class="form-control" placeholder="e.g. Chennai Airport" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Drop Location</label>
+                            <input type="text" id="req-drop" class="form-control" placeholder="e.g. Madurai Junction" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Trip Start Date & Time</label>
+                            <input type="datetime-local" id="req-start" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Trip Duration (Days)</label>
+                            <input type="number" id="req-days" class="form-control" value="1" min="1" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Vehicle Category</label>
+                            <select id="req-vehicle" class="form-control" required>
+                                <option value="Sedan (Dzire/Etios)">Sedan (Dzire/Etios)</option>
+                                <option value="SUV (Ertiga)">SUV (Ertiga)</option>
+                                <option value="Premium SUV (Innova Crysta)">Premium SUV (Innova Crysta)</option>
+                                <option value="Tempo Traveller (12 Seater)">Tempo Traveller (12 Seater)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Estimated Distance (Total KM)</label>
+                            <input type="number" id="req-km" class="form-control" value="300" required>
+                        </div>
+                    </div>
+
+                    <div id="quote-preview" class="quote-preview hidden"></div>
+                    <div id="request-error" class="error-msg hidden"></div>
+
+                    <div style="display:flex; gap:0.75rem; margin-top: 0.5rem;">
+                        <button type="button" class="btn btn-secondary btn-full" onclick="previewQuote()">🧮 Get Instant Quote</button>
+                        <button type="submit" class="btn btn-primary btn-full">Request This Trip</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Success Confirmation -->
+            <div class="booking-card success-card hidden" id="success-panel">
+                <div class="icon">✅</div>
+                <h2>Trip Request Received!</h2>
+                <p>We've sent your fare quote to your WhatsApp number.</p>
+                <p>Our team will confirm vehicle availability shortly.</p>
+                <div class="ref-code" id="success-ref"></div>
+                <div>
+                    <button type="button" class="btn btn-secondary" onclick="resetForm()">Request Another Trip</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="book.js"></script>
+</body>
+</html>

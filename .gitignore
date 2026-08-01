@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Environment secrets
+.env
+.env.local
+
+# WhatsApp Web session (live auth session - never commit)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Local database (contains real customer data)
+fleetlink.db
+fleetlink.db-shm
+fleetlink.db-wal
+
+# Logs
+fleetlink.log
+*.log
+
+# OS
+.DS_Store

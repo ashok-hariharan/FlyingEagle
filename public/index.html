@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FleetLink | WhatsApp B2B Outstation Operations Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="app-header">
+        <div class="brand">
+            <div class="logo-icon">🚕</div>
+            <div>
+                <h1>FleetLink <span>Operations</span></h1>
+                <p class="subtitle">WhatsApp B2B Outstation Dispatch Engine</p>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button id="whatsapp-status-btn" class="btn btn-secondary" onclick="openModal('modal-qr')">
+                <span id="wa-status-dot">🟡</span> <span id="wa-status-text">Checking WhatsApp...</span>
+            </button>
+            <button class="btn btn-primary" onclick="openNewBookingModal()">
+                <span>+</span> New Trip Booking
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Workspace Container -->
+    <div class="app-container">
+        
+        <!-- Sidebar Navigation Tabs -->
+        <nav class="sidebar">
+            <button class="nav-tab active" onclick="switchTab('board')">
+                <span class="icon">📊</span> Operations Board
+            </button>
+            <button class="nav-tab" onclick="switchTab('calculator')">
+                <span class="icon">🧮</span> Quick Quote Desk
+            </button>
+            <button class="nav-tab" onclick="switchTab('rates')">
+                <span class="icon">💳</span> Rate Cards
+            </button>
+            <button class="nav-tab" onclick="switchTab('partners')">
+                <span class="icon">🤝</span> Fleet & Tie-ups
+            </button>
+        </nav>
+
+        <!-- Main Content View -->
+        <main class="content">
+
+            <!-- 1. OPERATIONS BOARD TAB -->
+            <section id="tab-board" class="tab-content active">
+                <div class="section-header">
+                    <h2>Live Outstation Bookings</h2>
+                    <div class="badge-counter" id="booking-count">0 Bookings</div>
+                </div>
+
+                <div class="bookings-grid" id="bookings-list">
+                    <!-- Dynamic Booking Cards rendered here -->
+                </div>
+            </section>
+
+            <!-- 2. QUICK QUOTE CALCULATOR TAB -->
+            <section id="tab-calculator" class="tab-content">
+                <div class="section-header">
+                    <h2>Instant Tariff Calculator & WhatsApp Lead Link</h2>
+                    <p>Calculates minimum KM per day, per-KM rates, driver batta & night fees.</p>
+                </div>
+
+                <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 12px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+                    <div>
+                        <strong style="color: var(--accent-indigo); font-size: 0.95rem;">📱 Let Customers Request Trips Themselves</strong>
+                        <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.2rem;">Share either link on Google My Business, Instagram, or Facebook. Customers can text your WhatsApp bot, or fill out a web form &mdash; both create a trip request automatically.</p>
+                    </div>
+                    <div style="display:flex; gap:0.5rem; flex-wrap: wrap;">
+                        <button class="btn btn-secondary" onclick="copyWhatsAppLeadLink()">📋 Copy WhatsApp Link</button>
+                        <button class="btn btn-secondary" onclick="copyWebBookingLink()">🌐 Copy Web Booking Link</button>
+                    </div>
+                </div>
+
+                <div class="calc-card">
+                    <form id="calc-form" onsubmit="calculateQuote(event)">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Vehicle Category</label>
+                                <select id="calc-vehicle" class="form-control" required>
+                                    <option value="Sedan (Dzire/Etios)">Sedan (Dzire/Etios)</option>
+                                    <option value="SUV (Ertiga)">SUV (Ertiga)</option>
+                                    <option value="Premium SUV (Innova Crysta)" selected>Premium SUV (Innova Crysta)</option>
+                                    <option value="Tempo Traveller (12 Seater)">Tempo Traveller (12 Seater)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Estimated Distance (Total KM)</label>
+                                <input type="number" id="calc-km" class="form-control" value="600" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Number of Days</label>
+                                <input type="number" id="calc-days" class="form-control" value="2" required>
+                            </div>
+                            <div class="form-group checkbox-group">
+                                <label>
+                                    <input type="checkbox" id="calc-night"> Includes Night Driving (Surcharge)
+                                </label>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-accent btn-full">Calculate Fare Breakdown</button>
+                    </form>
+
+                    <div id="calc-result" class="calc-result-box hidden">
+                        <!-- Calculated quote output -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. RATE CARDS TAB -->
+            <section id="tab-rates" class="tab-content">
+                <div class="section-header">
+                    <h2>Outstation Rate Cards</h2>
+                    <p>Agreed standard pricing across internal fleet and tie-up partners.</p>
+                </div>
+
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Vehicle Type</th>
+                                <th>Per KM Rate (₹)</th>
+                                <th>Min KM / Day</th>
+                                <th>Driver Batta / Day (₹)</th>
+                                <th>Night Fee (₹)</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rate-cards-tbody">
+                            <!-- Rate card rows dynamically loaded -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 4. PARTNERS & TIE-UPS TAB -->
+            <section id="tab-partners" class="tab-content">
+                <div class="section-header">
+                    <h2>Partners & Fleet Directory</h2>
+                    <button class="btn btn-secondary" onclick="openNewPartnerModal()">+ Add Tie-up Partner</button>
+                </div>
+
+                <div class="partners-grid" id="partners-list">
+                    <!-- Partner cards loaded dynamically -->
+                </div>
+            </section>
+
+        </main>
+    </div>
+
+    <!-- MODAL 1: Create New Booking -->
+    <div class="modal-overlay" id="modal-booking">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-booking-title">New Outstation Booking</h3>
+                <button class="close-btn" onclick="closeModal('modal-booking')">&times;</button>
+            </div>
+            <form onsubmit="saveBooking(event)">
+                <input type="hidden" id="book-id">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Customer Name</label>
+                        <input type="text" id="book-name" class="form-control" placeholder="e.g. Ramesh Kumar" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Customer WhatsApp Phone</label>
+                        <input type="text" id="book-phone" class="form-control" placeholder="+919876543210" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Pickup Location</label>
+                        <input type="text" id="book-pickup" class="form-control" placeholder="e.g. Chennai Airport" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Drop Location</label>
+                        <input type="text" id="book-drop" class="form-control" placeholder="e.g. Madurai Junction" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Trip Start Date & Time</label>
+                        <input type="datetime-local" id="book-start" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Trip Duration (Days)</label>
+                        <input type="number" id="book-days" class="form-control" value="2" min="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Vehicle Category</label>
+                        <select id="book-vehicle" class="form-control" required>
+                            <option value="Sedan (Dzire/Etios)">Sedan (Dzire/Etios)</option>
+                            <option value="SUV (Ertiga)">SUV (Ertiga)</option>
+                            <option value="Premium SUV (Innova Crysta)">Premium SUV (Innova Crysta)</option>
+                            <option value="Tempo Traveller (12 Seater)">Tempo Traveller (12 Seater)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Estimated Distance (KM)</label>
+                        <input type="number" id="book-km" class="form-control" value="500" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-booking')">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="modal-booking-submit">Create & Send WhatsApp Quote</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 2: Assign Driver & Dispatch Voucher (T-4 Hours) -->
+    <div class="modal-overlay" id="modal-dispatch">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Assign Driver & Vehicle Details (T-4 Hours)</h3>
+                <button class="close-btn" onclick="closeModal('modal-dispatch')">&times;</button>
+            </div>
+            <form onsubmit="dispatchDriver(event)">
+                <input type="hidden" id="dispatch-booking-id">
+                <div class="form-group">
+                    <label>Driver Full Name</label>
+                    <input type="text" id="dispatch-driver-name" class="form-control" placeholder="e.g. Senthil Kumar" required>
+                </div>
+                <div class="form-group">
+                    <label>Driver Phone Number</label>
+                    <input type="text" id="dispatch-driver-phone" class="form-control" placeholder="+919789012345" required>
+                </div>
+                <div class="form-group">
+                    <label>Vehicle Registration Number</label>
+                    <input type="text" id="dispatch-vehicle-number" class="form-control" placeholder="e.g. TN 09 CB 4567" required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-dispatch')">Cancel</button>
+                    <button type="submit" class="btn btn-accent">Dispatch WhatsApp Trip Card</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 3: Add Partner -->
+    <div class="modal-overlay" id="modal-partner">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modal-partner-title">Add Tie-up Travel Partner</h3>
+                <button class="close-btn" onclick="closeModal('modal-partner')">&times;</button>
+            </div>
+            <form onsubmit="savePartner(event)">
+                <input type="hidden" id="partner-id">
+                <div class="form-group">
+                    <label>Partner Business / Owner Name</label>
+                    <input type="text" id="partner-name" class="form-control" placeholder="e.g. SRM Outstation Travels" required>
+                </div>
+                <div class="form-group">
+                    <label>Partner WhatsApp Phone</label>
+                    <input type="text" id="partner-phone" class="form-control" placeholder="+919876543210" required>
+                </div>
+                <div class="form-group">
+                    <label>Vehicles Offered</label>
+                    <div class="checkbox-list">
+                        <label><input type="checkbox" name="partner-vehicles" value="Sedan (Dzire/Etios)" checked> Sedan (Dzire/Etios)</label>
+                        <label><input type="checkbox" name="partner-vehicles" value="SUV (Ertiga)" checked> SUV (Ertiga)</label>
+                        <label><input type="checkbox" name="partner-vehicles" value="Premium SUV (Innova Crysta)" checked> Premium SUV (Innova Crysta)</label>
+                        <label><input type="checkbox" name="partner-vehicles" value="Tempo Traveller (12 Seater)"> Tempo Traveller (12 Seater)</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-partner')">Cancel</button>
+                    <button type="submit" class="btn btn-primary" id="modal-partner-submit">Save Partner</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 4: Scan WhatsApp Web QR Code -->
+    <div class="modal-overlay" id="modal-qr">
+        <div class="modal" style="text-align: center;">
+            <div class="modal-header">
+                <h3>Connect WhatsApp Web</h3>
+                <button class="close-btn" onclick="closeModal('modal-qr')">&times;</button>
+            </div>
+            <div class="qr-container" style="padding: 1.5rem 0;">
+                <div id="qr-spinner" style="font-size: 0.9rem; color: var(--text-muted);">Generating QR Code...</div>
+                <img id="qr-code-img" src="" alt="WhatsApp Web QR Code" style="max-width: 250px; border-radius: 12px; border: 4px solid var(--accent-indigo); display: none; margin: 0 auto;">
+                <div id="qr-status-msg" style="margin-top: 1rem; font-weight: 600; color: var(--text-secondary);">Initializing...</div>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
+                Open WhatsApp on your phone ➔ Menu (⋮) or Settings ➔ <strong>Linked Devices</strong> ➔ <strong>Link a Device</strong> ➔ Scan QR Code above.
+            </p>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
