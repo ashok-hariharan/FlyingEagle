@@ -126,7 +126,7 @@ async function dispatchTripVoucherToCustomer(bookingId, { driver_name, driver_ph
         `-----------------------------------\n` +
         `• Pickup Point: ${booking.pickup_location}\n` +
         `• Departure Time: ${booking.trip_start_date}\n\n` +
-        `Have a safe & safe outstation journey with FleetLink!`;
+        `Have a safe & safe outstation journey with Flying Eagle!`;
 
     await whatsapp.sendTextMessage(booking.customer_phone, tripCard);
 

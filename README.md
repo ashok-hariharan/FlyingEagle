@@ -1,4 +1,4 @@
-# 🚕 FleetLink - WhatsApp B2B Outstation Operations Engine & Operations Dashboard
+# 🚕 Flying Eagle - WhatsApp B2B Outstation Operations Engine & Operations Dashboard
 
 A production-ready, lightweight B2B fleet booking and automated dispatch platform for outstation car rentals. Built using **Meta WhatsApp Cloud API**, **Node.js (Express)**, **SQLite / PostgreSQL**, and a modern **Single-Page Operations Dashboard**.
 
@@ -98,7 +98,7 @@ Customers can text **`Hi`** or send structured quotes:
 
 System auto-replies with:
 ```
-*FleetLink Trip Quote* 🚕
+*Flying Eagle Trip Quote* 🚕
 • Vehicle: Sedan (Dzire/Etios)
 • Estimated Distance: 450 KM (Min Billed: 500 KM @ ₹13/KM)
 • Duration: 2 Day(s)

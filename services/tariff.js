@@ -36,7 +36,7 @@ function calculateTariff({ vehicle_type, estimated_km, num_days, is_night_trip =
         night_charge: nightCharge,
         is_night_trip: !!is_night_trip,
         total_amount: totalAmount,
-        breakdown_text: `*FleetLink Trip Quote* 🚕\n` +
+        breakdown_text: `*Flying Eagle Trip Quote* 🚕\n` +
             `• Vehicle: ${rateCard.vehicle_type}\n` +
             `• Estimated Distance: ${dist} KM (Min Billed: ${billableKm} KM @ ₹${rateCard.per_km_rate}/KM)\n` +
             `• Duration: ${days} Day(s)\n` +

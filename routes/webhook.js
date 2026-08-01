@@ -89,7 +89,7 @@ router.post('/whatsapp', async (req, res) => {
             // Auto Help / Welcome greeting
             if (incomingText.toLowerCase().includes('hi') || incomingText.toLowerCase().includes('book') || incomingText.toLowerCase().includes('help')) {
                 const welcomeMsg = 
-                    `👋 *Welcome to FleetLink Outstation Car Rental!*\n\n` +
+                    `👋 *Welcome to Flying Eagle Outstation Car Rental!*\n\n` +
                     `To get an instant fare quote, please reply in this format:\n\n` +
                     `*QUOTE [VehicleType] [Pickup] to [Drop] [DistanceKM] [NumDays]*\n\n` +
                     `*Examples of Vehicle Types:* Sedan, SUV, Innova, Tempo\n` +

@@ -32,7 +32,7 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, '127.0.0.1', () => {
     console.log(`=======================================================`);
-    console.log(`🚕 FleetLink WhatsApp Engine & Operations Dashboard`);
+    console.log(`🚕 Flying Eagle WhatsApp Engine & Operations Dashboard`);
     console.log(`📍 Running locally at: http://127.0.0.1:${PORT}`);
     console.log(`📲 Meta Webhook Endpoint: http://127.0.0.1:${PORT}/webhook/whatsapp`);
     console.log(`=======================================================`);

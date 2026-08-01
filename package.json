@@ -1,5 +1,5 @@
 {
-  "name": "fleetlink-whatsapp-engine",
+  "name": "flying-eagle-whatsapp-engine",
   "version": "1.0.0",
   "description": "WhatsApp-centric B2B Outstation Car Rental Dispatch Engine & Admin Dashboard",
   "main": "server.js",
@@ -23,6 +23,6 @@
     "fleet-management",
     "dispatch-system"
   ],
-  "author": "FleetLink Team",
+  "author": "Flying Eagle Team",
   "license": "MIT"
 }

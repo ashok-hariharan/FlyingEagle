@@ -127,7 +127,7 @@ function initWhatsAppClient() {
             if (!session || body.toLowerCase() === 'hi' || body.toLowerCase() === 'hello' || body.toLowerCase() === 'reset' || body.toLowerCase().includes('book') || body.toLowerCase().includes('new trip')) {
                 customerSessions[fromPhone] = { step: 1 };
                 const greeting = 
-                    `👋 *Welcome to FleetLink Outstation Car Rentals!* 🚕\n\n` +
+                    `👋 *Welcome to Flying Eagle Outstation Car Rentals!* 🚕\n\n` +
                     `I'll help you get an instant trip quote and reserve a vehicle.\n\n` +
                     `📝 *Step 1 of 6:*\n` +
                     `What is your *Name*?\n` +
@@ -260,7 +260,7 @@ function initWhatsAppClient() {
 
                 // Send complete quotation with summary
                 const finalMsg = 
-                    `🎉 *YOUR FLEETLINK TRIP QUOTATION* 🚕\n` +
+                    `🎉 *YOUR FLYING EAGLE TRIP QUOTATION* 🚕\n` +
                     `-----------------------------------\n` +
                     `• Booking Ref: *${bookingCode}*\n` +
                     `• Customer: *${session.customer_name}*\n` +
@@ -290,7 +290,7 @@ function initWhatsAppClient() {
             if (body.toLowerCase() === 'confirm') {
                 await sendTextMessage(fromPhone, 
                     `✅ *Booking Confirmed!* 🎉\n\n` +
-                    `Thank you! Your booking is locked with FleetLink.\n` +
+                    `Thank you! Your booking is locked with Flying Eagle.\n` +
                     `Driver & Vehicle details will be shared *2-4 hours* before your departure.\n\n` +
                     `For any changes, reply here or call us directly. Have a safe trip! 🚕`);
                 return;
@@ -299,7 +299,7 @@ function initWhatsAppClient() {
             // Fallback for unrecognized messages
             if (!session) {
                 await sendTextMessage(fromPhone,
-                    `👋 Hi there! Reply *HI* or *BOOK* to start your outstation trip booking with FleetLink. 🚕`);
+                    `👋 Hi there! Reply *HI* or *BOOK* to start your outstation trip booking with Flying Eagle. 🚕`);
             }
 
         } catch (err) {
