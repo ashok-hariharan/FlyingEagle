@@ -5,7 +5,32 @@ document.addEventListener('DOMContentLoaded', () => {
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(9, 0, 0, 0);
     document.getElementById('req-start').value = tomorrow.toISOString().slice(0, 16);
+    populateVehicleDropdown();
 });
+
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+async function populateVehicleDropdown() {
+    try {
+        const res = await fetch('/api/rate-cards');
+        const data = await res.json();
+        if (!data.success) return;
+
+        const select = document.getElementById('req-vehicle');
+        select.innerHTML = data.rateCards.map(rc =>
+            `<option value="${escapeHtml(rc.vehicle_type)}">${escapeHtml(rc.vehicle_type)}${rc.description ? ' - ' + escapeHtml(rc.description) : ''}</option>`
+        ).join('');
+    } catch (err) {
+        console.error('Error loading vehicle types:', err);
+    }
+}
 
 function collectPayload() {
     return {

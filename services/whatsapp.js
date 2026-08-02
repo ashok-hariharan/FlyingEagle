@@ -17,6 +17,7 @@ let tariffService = null;
 let dispatchService = null;
 let distanceService = null;
 let nluService = null;
+let availabilityService = null;
 let db = null;
 
 function getDependencies() {
@@ -24,11 +25,18 @@ function getDependencies() {
     if (!dispatchService) dispatchService = require('./dispatch');
     if (!distanceService) distanceService = require('./distance');
     if (!nluService) nluService = require('./nlu');
+    if (!availabilityService) availabilityService = require('./availability');
     if (!db) db = require('../config/database');
 }
 
 function emptySlots() {
     return { customer_name: null, pickup: null, drop: null, trip_date_raw: null, trip_date_display: null, num_days: null, vehicle_type: null };
+}
+
+// Live list of vehicle_type names from the rate card catalog, so NLU extraction always
+// recognizes whatever's currently bookable - including types added after this code shipped.
+function getCurrentVehicleTypes() {
+    return db.prepare('SELECT vehicle_type FROM rate_cards ORDER BY id ASC').all().map(r => r.vehicle_type);
 }
 
 // Parses a natural-language date phrase (via chrono-node) into ISO storage + friendly display strings.
@@ -57,7 +65,7 @@ function applyExtractedSlots(slots, extracted) {
     if (extracted.pickup) { slots.pickup = extracted.pickup; changed = true; }
     if (extracted.drop) { slots.drop = extracted.drop; changed = true; }
     if (extracted.num_days) { slots.num_days = extracted.num_days; changed = true; }
-    if (extracted.vehicle_type) { slots.vehicle_type = nluService.VEHICLE_TYPE_MAP[extracted.vehicle_type]; changed = true; }
+    if (extracted.vehicle_type) { slots.vehicle_type = extracted.vehicle_type; changed = true; }
     if (extracted.trip_date_text) {
         const parsedDate = parseTripDate(extracted.trip_date_text);
         if (parsedDate) {
@@ -75,7 +83,7 @@ function missingSlotQuestions(slots) {
     if (!slots.pickup || !slots.drop) missing.push('Where are you traveling *from and to*?');
     if (!slots.trip_date_raw) missing.push('What *date* would you like to travel?');
     if (!slots.num_days) missing.push('How many *days* is the trip?');
-    if (!slots.vehicle_type) missing.push('Which *vehicle* would you like - Sedan, SUV, Innova, or Tempo Traveller?');
+    if (!slots.vehicle_type) missing.push(`Which *vehicle* would you like - ${getCurrentVehicleTypes().join(', ')}?`);
     return missing;
 }
 
@@ -291,6 +299,39 @@ function initWhatsAppClient() {
                 }
             }
 
+            // A3. Partner Availability Update - any other message from a known partner
+            // number is treated as a free-text availability report (e.g. "Sedan available
+            // in Chennai today", "not available today"). No scheduled prompts - partners
+            // update whenever their situation changes.
+            const reportingPartner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+            if (reportingPartner) {
+                const avail = await nluService.extractAvailabilityUpdate(body, getCurrentVehicleTypes());
+
+                if (avail.is_available === null && !avail.vehicle_type && !avail.location) {
+                    await sendTextMessage(fromPhone,
+                        `👋 Hi ${reportingPartner.name}! To update your availability, just tell us, e.g.:\n` +
+                        `_"Sedan available in Chennai today"_ or _"not available today"_.`);
+                    return;
+                }
+
+                const record = await availabilityService.reportAvailability(reportingPartner.id, avail);
+
+                if (record.is_available) {
+                    const details = [
+                        record.vehicle_type ? `Vehicle: *${record.vehicle_type}*` : null,
+                        record.vehicle_number ? `Reg: *${record.vehicle_number}*` : null,
+                        record.location ? `Location: *${record.location}*` : null
+                    ].filter(Boolean).join(' | ');
+                    await sendTextMessage(fromPhone,
+                        `✅ Thanks ${reportingPartner.name}! Marked you *available*${details ? ` - ${details}` : ''}.\n` +
+                        `We'll prioritize you for nearby trips. Reply anytime to update.`);
+                } else {
+                    await sendTextMessage(fromPhone,
+                        `✅ Thanks ${reportingPartner.name}! Marked you *unavailable* - we won't send trip offers until you update us again.`);
+                }
+                return;
+            }
+
             // B. Conversational Customer Booking Assistant (open-ended, slot-filling flow)
             let session = customerSessions[fromPhone];
 
@@ -327,7 +368,7 @@ function initWhatsAppClient() {
 
                 // Try extracting from this same triggering message right away, so a customer who
                 // already stated their trip in full doesn't get asked to repeat themselves.
-                const extracted = await nluService.extractTripDetails(body, newSession.slots);
+                const extracted = await nluService.extractTripDetails(body, newSession.slots, getCurrentVehicleTypes());
                 const gotSomething = applyExtractedSlots(newSession.slots, extracted);
 
                 const intro = knownName
@@ -385,7 +426,18 @@ function initWhatsAppClient() {
             // Phase: collecting - extract whatever we can from the customer's message, and
             // ask only for whatever's still missing (never re-asking what we already have).
             if (session.phase === 'collecting') {
-                const extracted = await nluService.extractTripDetails(body, session.slots);
+                const extracted = await nluService.extractTripDetails(body, session.slots, getCurrentVehicleTypes());
+
+                // An infrastructure failure (Gemini unreachable/timed out) is not the
+                // customer's fault - don't count it against the no-progress loop-guard,
+                // and be honest that we couldn't read their message rather than implying
+                // we understood it and just need more info.
+                if (extracted._apiError) {
+                    await sendTextMessage(fromPhone,
+                        `⚠️ Sorry, we're having trouble processing messages right now. Please resend your last message in a moment.`);
+                    return;
+                }
+
                 const gotSomething = applyExtractedSlots(session.slots, extracted);
 
                 const missing = missingSlotQuestions(session.slots);
@@ -512,7 +564,14 @@ function initWhatsAppClient() {
                 }
 
                 // Not a plain confirm or extra-KM number - treat as a correction
-                const extracted = await nluService.extractTripDetails(body, session.slots);
+                const extracted = await nluService.extractTripDetails(body, session.slots, getCurrentVehicleTypes());
+
+                if (extracted._apiError) {
+                    await sendTextMessage(fromPhone,
+                        `⚠️ Sorry, we're having trouble processing messages right now. Please resend your last message in a moment.`);
+                    return;
+                }
+
                 const routeChanged = (extracted.pickup && extracted.pickup !== session.slots.pickup) ||
                     (extracted.drop && extracted.drop !== session.slots.drop);
                 const changed = applyExtractedSlots(session.slots, extracted);

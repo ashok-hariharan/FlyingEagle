@@ -1,5 +1,6 @@
 const db = require('../config/database');
 const whatsapp = require('./whatsapp');
+const availabilityService = require('./availability');
 
 /**
  * Broadcasts an unassigned booking to tie-up travel partners via WhatsApp.
@@ -13,7 +14,7 @@ async function broadcastToPartners(bookingId) {
 
     // Fetch active tie-up partners (excluding internal fleet) who offer this vehicle type
     const allPartners = db.prepare('SELECT * FROM partners WHERE is_active = 1 AND is_internal = 0').all();
-    const eligiblePartners = allPartners.filter(p => {
+    const vehicleMatches = allPartners.filter(p => {
         try {
             const vehicles = JSON.parse(p.vehicles_offered || '[]');
             return vehicles.includes(booking.vehicle_type);
@@ -21,6 +22,10 @@ async function broadcastToPartners(bookingId) {
             return false;
         }
     });
+
+    // Skip partners who've explicitly reported unavailable, and offer to the nearest
+    // available ones first (partners with no report on file stay eligible by default).
+    const eligiblePartners = await availabilityService.filterAndRankPartners(vehicleMatches, booking.pickup_location);
 
     if (eligiblePartners.length === 0) {
         console.warn(`[Dispatch] No eligible tie-up partners found for vehicle type '${booking.vehicle_type}'.`);
@@ -75,7 +80,7 @@ async function offerToOwnFleet(bookingId) {
     }
 
     const internalFleet = db.prepare('SELECT * FROM partners WHERE is_active = 1 AND is_internal = 1').all();
-    const eligibleFleet = internalFleet.filter(p => {
+    const vehicleMatches = internalFleet.filter(p => {
         try {
             const vehicles = JSON.parse(p.vehicles_offered || '[]');
             return vehicles.includes(booking.vehicle_type);
@@ -83,6 +88,8 @@ async function offerToOwnFleet(bookingId) {
             return false;
         }
     });
+
+    const eligibleFleet = await availabilityService.filterAndRankPartners(vehicleMatches, booking.pickup_location);
 
     if (eligibleFleet.length === 0) {
         console.warn(`[Dispatch] No own-fleet vehicle available for '${booking.vehicle_type}' - going straight to tie-up partners.`);
