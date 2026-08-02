@@ -88,10 +88,7 @@
                             <div class="form-group">
                                 <label>Vehicle Category</label>
                                 <select id="calc-vehicle" class="form-control" required>
-                                    <option value="Sedan (Dzire/Etios)">Sedan (Dzire/Etios)</option>
-                                    <option value="SUV (Ertiga)">SUV (Ertiga)</option>
-                                    <option value="Premium SUV (Innova Crysta)" selected>Premium SUV (Innova Crysta)</option>
-                                    <option value="Tempo Traveller (12 Seater)">Tempo Traveller (12 Seater)</option>
+                                    <!-- Options populated dynamically from the rate card catalog -->
                                 </select>
                             </div>
                             <div class="form-group">
@@ -121,14 +118,16 @@
             <section id="tab-rates" class="tab-content">
                 <div class="section-header">
                     <h2>Outstation Rate Cards</h2>
-                    <p>Agreed standard pricing across internal fleet and tie-up partners.</p>
+                    <button class="btn btn-secondary" onclick="openNewVehicleTypeModal()">+ Add New Vehicle Type</button>
                 </div>
+                <p style="color: var(--text-secondary); margin-bottom: 1rem;">Agreed standard pricing across internal fleet and tie-up partners.</p>
 
                 <div class="table-container">
                     <table class="data-table">
                         <thead>
                             <tr>
                                 <th>Vehicle Type</th>
+                                <th>Description</th>
                                 <th>Per KM Rate (₹)</th>
                                 <th>Min KM / Day</th>
                                 <th>Driver Batta / Day (₹)</th>
@@ -195,10 +194,7 @@
                     <div class="form-group">
                         <label>Vehicle Category</label>
                         <select id="book-vehicle" class="form-control" required>
-                            <option value="Sedan (Dzire/Etios)">Sedan (Dzire/Etios)</option>
-                            <option value="SUV (Ertiga)">SUV (Ertiga)</option>
-                            <option value="Premium SUV (Innova Crysta)">Premium SUV (Innova Crysta)</option>
-                            <option value="Tempo Traveller (12 Seater)">Tempo Traveller (12 Seater)</option>
+                            <!-- Options populated dynamically from the rate card catalog -->
                         </select>
                     </div>
                     <div class="form-group">
@@ -262,11 +258,8 @@
                 </div>
                 <div class="form-group">
                     <label>Vehicles Offered</label>
-                    <div class="checkbox-list">
-                        <label><input type="checkbox" name="partner-vehicles" value="Sedan (Dzire/Etios)" checked> Sedan (Dzire/Etios)</label>
-                        <label><input type="checkbox" name="partner-vehicles" value="SUV (Ertiga)" checked> SUV (Ertiga)</label>
-                        <label><input type="checkbox" name="partner-vehicles" value="Premium SUV (Innova Crysta)" checked> Premium SUV (Innova Crysta)</label>
-                        <label><input type="checkbox" name="partner-vehicles" value="Tempo Traveller (12 Seater)"> Tempo Traveller (12 Seater)</label>
+                    <div class="checkbox-list" id="partner-vehicles-list">
+                        <!-- Checkboxes populated dynamically from the rate card catalog -->
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -277,7 +270,49 @@
         </div>
     </div>
 
-    <!-- MODAL 4: Scan WhatsApp Web QR Code -->
+    <!-- MODAL 4: Add New Vehicle Type -->
+    <div class="modal-overlay" id="modal-vehicle-type">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Add New Vehicle Type</h3>
+                <button class="close-btn" onclick="closeModal('modal-vehicle-type')">&times;</button>
+            </div>
+            <form onsubmit="saveNewVehicleType(event)">
+                <div class="form-group">
+                    <label>Vehicle Type Name</label>
+                    <input type="text" id="vt-name" class="form-control" placeholder="e.g. Luxury Sedan (Camry/Accord)" required>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="vt-description" class="form-control" placeholder="e.g. Premium 4-seater for executive travel">
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Per KM Rate (₹)</label>
+                        <input type="number" step="0.5" id="vt-per-km" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Min KM / Day</label>
+                        <input type="number" id="vt-min-km" class="form-control" value="250" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Driver Batta / Day (₹)</label>
+                        <input type="number" id="vt-batta" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Night Fee (₹)</label>
+                        <input type="number" id="vt-night" class="form-control" value="0">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal('modal-vehicle-type')">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add Vehicle Type</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 5: Scan WhatsApp Web QR Code -->
     <div class="modal-overlay" id="modal-qr">
         <div class="modal" style="text-align: center;">
             <div class="modal-header">

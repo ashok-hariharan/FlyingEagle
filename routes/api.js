@@ -259,13 +259,13 @@ router.get('/rate-cards', (req, res) => {
 router.put('/rate-cards/:id', (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
-        const { per_km_rate, min_km_per_day, driver_batta_per_day, night_charge } = req.body;
+        const { per_km_rate, min_km_per_day, driver_batta_per_day, night_charge, description } = req.body;
 
         db.prepare(`
-            UPDATE rate_cards 
-            SET per_km_rate = ?, min_km_per_day = ?, driver_batta_per_day = ?, night_charge = ?
+            UPDATE rate_cards
+            SET per_km_rate = ?, min_km_per_day = ?, driver_batta_per_day = ?, night_charge = ?, description = ?
             WHERE id = ?
-        `).run(per_km_rate, min_km_per_day, driver_batta_per_day, night_charge, id);
+        `).run(per_km_rate, min_km_per_day, driver_batta_per_day, night_charge, description || '', id);
 
         const updated = db.prepare('SELECT * FROM rate_cards WHERE id = ?').get(id);
         res.json({ success: true, rateCard: updated });
@@ -274,7 +274,39 @@ router.put('/rate-cards/:id', (req, res) => {
     }
 });
 
-// 7b. Delete Rate Card
+// 7b. Add New Vehicle Type
+router.post('/rate-cards', (req, res) => {
+    try {
+        const { vehicle_type, per_km_rate, min_km_per_day, driver_batta_per_day, night_charge, description } = req.body;
+
+        if (!vehicle_type || !vehicle_type.trim()) {
+            return res.status(400).json({ success: false, error: 'Vehicle type name is required.' });
+        }
+
+        const stmt = db.prepare(`
+            INSERT INTO rate_cards (vehicle_type, per_km_rate, min_km_per_day, driver_batta_per_day, night_charge, description)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `);
+        const result = stmt.run(
+            vehicle_type.trim(),
+            per_km_rate,
+            min_km_per_day || 250,
+            driver_batta_per_day,
+            night_charge || 0,
+            description || ''
+        );
+
+        const newRateCard = db.prepare('SELECT * FROM rate_cards WHERE id = ?').get(result.lastInsertRowid);
+        res.json({ success: true, rateCard: newRateCard });
+    } catch (error) {
+        if (error.message.includes('UNIQUE constraint failed')) {
+            return res.status(400).json({ success: false, error: `Vehicle type "${req.body.vehicle_type}" already exists.` });
+        }
+        res.status(400).json({ success: false, error: error.message });
+    }
+});
+
+// 7c. Delete Rate Card
 router.delete('/rate-cards/:id', (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);
@@ -291,7 +323,14 @@ router.delete('/rate-cards/:id', (req, res) => {
 // 8. Partners API
 router.get('/partners', (req, res) => {
     try {
-        const partners = db.prepare('SELECT * FROM partners ORDER BY is_internal DESC, id ASC').all();
+        const partners = db.prepare(`
+            SELECT p.*, a.is_available, a.vehicle_type as available_vehicle_type,
+                a.vehicle_number as available_vehicle_number, a.location as available_location,
+                a.reported_at as availability_reported_at
+            FROM partners p
+            LEFT JOIN partner_availability a ON a.partner_id = p.id
+            ORDER BY p.is_internal DESC, p.id ASC
+        `).all();
         const formatted = partners.map(p => ({
             ...p,
             vehicles_offered: JSON.parse(p.vehicles_offered || '[]')

@@ -2,6 +2,9 @@ const ORS_API_KEY = process.env.ORS_API_KEY || '';
 const ORS_BASE = 'https://api.openrouteservice.org';
 
 async function geocode(placeText) {
+    if (!ORS_API_KEY) {
+        throw new Error('Distance API is not configured (missing ORS_API_KEY).');
+    }
     const url = `${ORS_BASE}/geocode/search?api_key=${encodeURIComponent(ORS_API_KEY)}` +
         `&text=${encodeURIComponent(placeText)}&boundary.country=IN&size=1`;
 
@@ -56,5 +59,6 @@ async function calculateRouteDistance(pickupText, dropText) {
 }
 
 module.exports = {
-    calculateRouteDistance
+    calculateRouteDistance,
+    geocode
 };

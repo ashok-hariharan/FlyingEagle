@@ -2,14 +2,51 @@
 
 let currentBookings = [];
 let currentPartners = [];
+let currentRateCards = [];
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadBookings();
+    populateVehicleDropdowns().then(() => {
+        loadBookings();
+        loadPartners();
+    });
     loadRateCards();
-    loadPartners();
     pollWhatsAppStatus();
     setInterval(pollWhatsAppStatus, 3000);
 });
+
+// Populates every vehicle-type dropdown/checklist in the app from the live rate card
+// catalog, so a newly-added vehicle type is immediately selectable everywhere.
+async function populateVehicleDropdowns() {
+    try {
+        const res = await fetch('/api/rate-cards');
+        const data = await res.json();
+        if (!data.success) return;
+
+        currentRateCards = data.rateCards;
+
+        const calcSelect = document.getElementById('calc-vehicle');
+        const bookSelect = document.getElementById('book-vehicle');
+        const partnerChecklist = document.getElementById('partner-vehicles-list');
+
+        if (calcSelect) {
+            calcSelect.innerHTML = data.rateCards.map(rc =>
+                `<option value="${escapeHtml(rc.vehicle_type)}">${escapeHtml(rc.vehicle_type)}</option>`
+            ).join('');
+        }
+        if (bookSelect) {
+            bookSelect.innerHTML = data.rateCards.map(rc =>
+                `<option value="${escapeHtml(rc.vehicle_type)}">${escapeHtml(rc.vehicle_type)}</option>`
+            ).join('');
+        }
+        if (partnerChecklist) {
+            partnerChecklist.innerHTML = data.rateCards.map(rc =>
+                `<label><input type="checkbox" name="partner-vehicles" value="${escapeHtml(rc.vehicle_type)}" checked> ${escapeHtml(rc.vehicle_type)}</label>`
+            ).join('');
+        }
+    } catch (err) {
+        console.error('Error populating vehicle dropdowns:', err);
+    }
+}
 
 // Tab Switcher
 function switchTab(tabId) {
@@ -483,10 +520,13 @@ async function loadRateCards() {
         const data = await res.json();
         if (!data.success) return;
 
+        currentRateCards = data.rateCards;
+
         const tbody = document.getElementById('rate-cards-tbody');
         tbody.innerHTML = data.rateCards.map(rc => `
             <tr>
                 <td><strong>${escapeHtml(rc.vehicle_type)}</strong></td>
+                <td><input type="text" id="rate-desc-${rc.id}" class="form-control" value="${escapeHtml(rc.description || '')}" style="width: 200px;" placeholder="Description"></td>
                 <td><input type="number" step="0.5" id="rate-km-${rc.id}" class="form-control" value="${rc.per_km_rate}" style="width: 100px;"></td>
                 <td><input type="number" id="rate-minkm-${rc.id}" class="form-control" value="${rc.min_km_per_day}" style="width: 100px;"></td>
                 <td><input type="number" id="rate-batta-${rc.id}" class="form-control" value="${rc.driver_batta_per_day}" style="width: 110px;"></td>
@@ -502,6 +542,47 @@ async function loadRateCards() {
     }
 }
 
+function openNewVehicleTypeModal() {
+    document.getElementById('vt-name').value = '';
+    document.getElementById('vt-description').value = '';
+    document.getElementById('vt-per-km').value = '';
+    document.getElementById('vt-min-km').value = 250;
+    document.getElementById('vt-batta').value = '';
+    document.getElementById('vt-night').value = 0;
+    openModal('modal-vehicle-type');
+}
+
+async function saveNewVehicleType(e) {
+    e.preventDefault();
+    const payload = {
+        vehicle_type: document.getElementById('vt-name').value,
+        description: document.getElementById('vt-description').value,
+        per_km_rate: parseFloat(document.getElementById('vt-per-km').value),
+        min_km_per_day: parseInt(document.getElementById('vt-min-km').value, 10),
+        driver_batta_per_day: parseFloat(document.getElementById('vt-batta').value),
+        night_charge: parseFloat(document.getElementById('vt-night').value) || 0
+    };
+
+    try {
+        const res = await fetch('/api/rate-cards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert(`✅ Vehicle type "${data.rateCard.vehicle_type}" added! It's now selectable everywhere.`);
+            closeModal('modal-vehicle-type');
+            loadRateCards();
+            populateVehicleDropdowns();
+        } else {
+            alert(`⚠️ ${data.error || 'Failed to add vehicle type.'}`);
+        }
+    } catch (err) {
+        alert('Error adding vehicle type.');
+    }
+}
+
 async function deleteRateCard(id, vehicleType) {
     if (!confirm(`Delete the rate card for "${vehicleType}"? Bookings and quotes for this vehicle type will no longer be possible.`)) return;
 
@@ -510,6 +591,7 @@ async function deleteRateCard(id, vehicleType) {
         const data = await res.json();
         if (data.success) {
             loadRateCards();
+            populateVehicleDropdowns();
         } else {
             alert(`⚠️ ${data.error || 'Failed to delete rate card.'}`);
         }
@@ -520,6 +602,7 @@ async function deleteRateCard(id, vehicleType) {
 
 async function updateRateCard(id) {
     const payload = {
+        description: document.getElementById(`rate-desc-${id}`).value,
         per_km_rate: parseFloat(document.getElementById(`rate-km-${id}`).value),
         min_km_per_day: parseInt(document.getElementById(`rate-minkm-${id}`).value, 10),
         driver_batta_per_day: parseFloat(document.getElementById(`rate-batta-${id}`).value),
@@ -543,6 +626,33 @@ async function updateRateCard(id) {
 }
 
 // 8. Load Partners Directory
+function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    const diffMs = Date.now() - new Date(dateStr.replace(' ', 'T') + 'Z').getTime();
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+}
+
+function renderAvailabilityStatus(p) {
+    if (p.is_available === null || p.is_available === undefined) {
+        return `<span class="status-badge status-PENDING">⚪ No availability reported</span>`;
+    }
+    if (p.is_available) {
+        const details = [
+            p.available_vehicle_type,
+            p.available_location ? `@ ${p.available_location}` : null
+        ].filter(Boolean).join(' ');
+        return `<span class="status-badge status-CONFIRMED">🟢 Available${details ? ': ' + escapeHtml(details) : ''}</span> ` +
+            `<span style="font-size:0.75rem; color: var(--text-muted);">${timeAgo(p.availability_reported_at)}</span>`;
+    }
+    return `<span class="status-badge status-INTERNAL_OFFERED">🔴 Unavailable</span> ` +
+        `<span style="font-size:0.75rem; color: var(--text-muted);">${timeAgo(p.availability_reported_at)}</span>`;
+}
+
 async function loadPartners() {
     try {
         const res = await fetch('/api/partners');
@@ -563,6 +673,7 @@ async function loadPartners() {
                     <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.3rem;">
                         ${p.vehicles_offered.map(v => `<span class="status-badge status-CONFIRMED">${escapeHtml(v)}</span>`).join('')}
                     </div>
+                    <div style="margin-top:0.5rem;">${renderAvailabilityStatus(p)}</div>
                 </div>
                 <div class="card-footer">
                     <div style="display:flex; gap:0.5rem;">
