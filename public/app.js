@@ -135,7 +135,47 @@ async function deletePartner(partnerId, partnerName) {
 
 function openDispatchModal(bookingId) {
     document.getElementById('dispatch-booking-id').value = bookingId;
+
+    // Pre-fill with the last driver/vehicle used for this booking's partner, if we have one
+    const b = currentBookings.find(x => x.id === bookingId);
+    document.getElementById('dispatch-driver-name').value = (b && b.last_driver_name) || '';
+    document.getElementById('dispatch-driver-phone').value = (b && b.last_driver_phone) || '';
+    document.getElementById('dispatch-vehicle-number').value = (b && b.last_vehicle_number) || '';
+
     openModal('modal-dispatch');
+}
+
+// One-click send using the last known driver/vehicle for this booking's partner -
+// skips the modal entirely when we already have the details on file.
+async function sendLastKnownDriver(bookingId) {
+    const b = currentBookings.find(x => x.id === bookingId);
+    if (!b || !b.last_driver_name) {
+        alert('No known driver details found for this partner.');
+        return;
+    }
+
+    if (!confirm(`Send trip card to customer with:\nDriver: ${b.last_driver_name}\nPhone: ${b.last_driver_phone}\nVehicle: ${b.last_vehicle_number}?`)) return;
+
+    try {
+        const res = await fetch(`/api/bookings/${bookingId}/dispatch-driver`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                driver_name: b.last_driver_name,
+                driver_phone: b.last_driver_phone,
+                vehicle_number: b.last_vehicle_number
+            })
+        });
+        const data = await res.json();
+        if (data.success) {
+            alert('✅ Driver details & Trip Card sent to Customer over WhatsApp!');
+            loadBookings();
+        } else {
+            alert(`⚠️ ${data.error || 'Failed to send driver details.'}`);
+        }
+    } catch (err) {
+        alert('Error sending driver details.');
+    }
 }
 
 // 1. Load Bookings
@@ -200,6 +240,18 @@ function renderCardActions(b) {
             </button>
         `;
     }
+    if (b.status === 'INTERNAL_OFFERED') {
+        return `
+            <div style="display:flex; gap:0.5rem;">
+                <button class="btn btn-primary btn-full" onclick="acceptOwnFleet(${b.id})">
+                    ✅ Accept for Own Fleet
+                </button>
+                <button class="btn btn-secondary btn-full" onclick="declineOwnFleet(${b.id})">
+                    ❌ Decline (Send to Partners)
+                </button>
+            </div>
+        `;
+    }
     if (b.status === 'PARTNER_BROADCAST') {
         return `
             <button class="btn btn-secondary btn-full" disabled>
@@ -208,6 +260,18 @@ function renderCardActions(b) {
         `;
     }
     if (b.status === 'ASSIGNED' || b.status === 'CONFIRMED') {
+        if (b.last_driver_name) {
+            return `
+                <div style="display:flex; gap:0.5rem;">
+                    <button class="btn btn-accent btn-full" onclick="sendLastKnownDriver(${b.id})">
+                        ⚡ Send ${escapeHtml(b.last_driver_name)} Instantly
+                    </button>
+                    <button class="btn btn-secondary btn-full" onclick="openDispatchModal(${b.id})">
+                        ✏️ Different Driver
+                    </button>
+                </div>
+            `;
+        }
         return `
             <button class="btn btn-accent btn-full" onclick="openDispatchModal(${b.id})">
                 📲 Dispatch Driver Card (T-4 Hours)
@@ -238,6 +302,7 @@ function renderSourceTag(notes) {
 function formatStatus(status) {
     switch (status) {
         case 'PENDING': return 'Pending Quote';
+        case 'INTERNAL_OFFERED': return 'Offered to Own Fleet';
         case 'PARTNER_BROADCAST': return 'Partner Broadcast Sent';
         case 'ASSIGNED': return 'Partner Assigned';
         case 'CONFIRMED': return 'Confirmed';
@@ -280,6 +345,40 @@ async function quickAssignInternalFleet(bookingId) {
         }
     } catch (err) {
         alert('Failed to assign internal fleet.');
+    }
+}
+
+// Accept/Decline an own-fleet first-refusal offer directly from the dashboard
+// (doesn't rely on a WhatsApp reply, since the fleet's own number often can't message itself)
+async function acceptOwnFleet(bookingId) {
+    try {
+        const res = await fetch(`/api/bookings/${bookingId}/accept-internal`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            alert('✅ Trip assigned to Own Fleet & WhatsApp confirmation sent!');
+            loadBookings();
+        } else {
+            alert(`⚠️ ${data.error || 'Failed to accept for own fleet.'}`);
+        }
+    } catch (err) {
+        alert('Error accepting for own fleet.');
+    }
+}
+
+async function declineOwnFleet(bookingId) {
+    if (!confirm('Release this trip to tie-up partners instead of own fleet?')) return;
+
+    try {
+        const res = await fetch(`/api/bookings/${bookingId}/decline-internal`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            alert(`✅ Released to tie-up partners! Broadcast sent to ${data.count} partner(s).`);
+            loadBookings();
+        } else {
+            alert(`⚠️ ${data.message || data.error || 'No eligible tie-up partners found.'}`);
+        }
+    } catch (err) {
+        alert('Error declining own fleet offer.');
     }
 }
 
@@ -536,6 +635,8 @@ async function pollWhatsAppStatus() {
         const qrImg = document.getElementById('qr-code-img');
         const qrSpinner = document.getElementById('qr-spinner');
         const qrStatusMsg = document.getElementById('qr-status-msg');
+        const scanInstructions = document.getElementById('qr-scan-instructions');
+        const disconnectBtn = document.getElementById('wa-disconnect-btn');
 
         if (data.isConnected) {
             dot.textContent = '🟢';
@@ -543,10 +644,14 @@ async function pollWhatsAppStatus() {
             qrStatusMsg.textContent = `✅ Connected as +${data.connectedUser}`;
             qrSpinner.style.display = 'none';
             qrImg.style.display = 'none';
+            scanInstructions.classList.add('hidden');
+            disconnectBtn.classList.remove('hidden');
         } else {
             dot.textContent = data.qrDataURL ? '🔴' : '🟡';
             text.textContent = data.qrDataURL ? 'Scan QR Code to Connect' : 'Connecting WhatsApp...';
             qrStatusMsg.textContent = data.statusMessage || 'Scan QR Code below';
+            scanInstructions.classList.remove('hidden');
+            disconnectBtn.classList.add('hidden');
 
             if (data.qrDataURL) {
                 qrSpinner.style.display = 'none';
@@ -559,6 +664,24 @@ async function pollWhatsAppStatus() {
         }
     } catch (err) {
         console.error('Failed to poll WhatsApp status:', err);
+    }
+}
+
+// Disconnect WhatsApp Web (unlinks the device; a fresh QR code appears afterward)
+async function disconnectWhatsApp() {
+    if (!confirm('Disconnect WhatsApp? The bot will stop sending/receiving messages until you scan a new QR code to reconnect.')) return;
+
+    try {
+        const res = await fetch('/api/whatsapp/disconnect', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            alert('🔌 WhatsApp disconnected. A new QR code will appear shortly.');
+            pollWhatsAppStatus();
+        } else {
+            alert(`⚠️ ${data.error || 'Failed to disconnect WhatsApp.'}`);
+        }
+    } catch (err) {
+        alert('Error disconnecting WhatsApp.');
     }
 }
 

@@ -289,9 +289,12 @@
                 <img id="qr-code-img" src="" alt="WhatsApp Web QR Code" style="max-width: 250px; border-radius: 12px; border: 4px solid var(--accent-indigo); display: none; margin: 0 auto;">
                 <div id="qr-status-msg" style="margin-top: 1rem; font-weight: 600; color: var(--text-secondary);">Initializing...</div>
             </div>
-            <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
+            <p id="qr-scan-instructions" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
                 Open WhatsApp on your phone ➔ Menu (⋮) or Settings ➔ <strong>Linked Devices</strong> ➔ <strong>Link a Device</strong> ➔ Scan QR Code above.
             </p>
+            <button id="wa-disconnect-btn" class="btn btn-danger btn-full hidden" style="margin-top: 1rem;" onclick="disconnectWhatsApp()">
+                🔌 Disconnect WhatsApp
+            </button>
         </div>
     </div>
 

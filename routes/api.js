@@ -9,6 +9,16 @@ const whatsappService = require('../services/whatsapp');
 router.get('/whatsapp/status', (req, res) => {
     res.json({ success: true, ...whatsappService.getStatus() });
 });
+
+// 1c. Disconnect WhatsApp Web (unlinks the device; a fresh QR code is generated afterward)
+router.post('/whatsapp/disconnect', async (req, res) => {
+    try {
+        const result = await whatsappService.disconnectClient();
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 router.post('/quick-quote', (req, res) => {
     try {
         const { vehicle_type, estimated_km, num_days, is_night_trip } = req.body;
@@ -28,7 +38,10 @@ router.post('/quick-quote', (req, res) => {
 router.get('/bookings', (req, res) => {
     try {
         const bookings = db.prepare(`
-            SELECT b.*, p.name as partner_name, p.phone as partner_phone 
+            SELECT b.*, p.name as partner_name, p.phone as partner_phone,
+                (SELECT driver_name FROM bookings b2 WHERE b2.assigned_partner_id = b.assigned_partner_id AND b2.driver_name IS NOT NULL ORDER BY b2.id DESC LIMIT 1) as last_driver_name,
+                (SELECT driver_phone FROM bookings b2 WHERE b2.assigned_partner_id = b.assigned_partner_id AND b2.driver_name IS NOT NULL ORDER BY b2.id DESC LIMIT 1) as last_driver_phone,
+                (SELECT vehicle_number FROM bookings b2 WHERE b2.assigned_partner_id = b.assigned_partner_id AND b2.driver_name IS NOT NULL ORDER BY b2.id DESC LIMIT 1) as last_vehicle_number
             FROM bookings b
             LEFT JOIN partners p ON b.assigned_partner_id = p.id
             ORDER BY b.id DESC
@@ -94,7 +107,8 @@ router.post('/bookings', async (req, res) => {
         // Send confirmation quote to customer via WhatsApp
         await whatsappService.sendTextMessage(
             customer_phone,
-            `Hello ${customer_name}! Here is your outstation trip quotation:\n\n` + quote.breakdown_text
+            `Hello ${customer_name}! Here is your outstation trip quotation:\n\n` + quote.breakdown_text +
+            `\n\nReply *CONFIRM* to lock this booking and we'll notify our partner fleet immediately!`
         );
 
         res.json({ success: true, booking: newBooking, quote });
@@ -175,6 +189,28 @@ router.post('/bookings/:id/broadcast', async (req, res) => {
         const bookingId = parseInt(req.params.id, 10);
         const broadcastResult = await dispatchService.broadcastToPartners(bookingId);
         res.json(broadcastResult);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 4b. Accept an Own-Fleet First-Refusal Offer directly from the dashboard
+router.post('/bookings/:id/accept-internal', async (req, res) => {
+    try {
+        const bookingId = parseInt(req.params.id, 10);
+        const result = await dispatchService.acceptOwnFleetOffer(bookingId);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 4c. Decline an Own-Fleet First-Refusal Offer -> release to tie-up partners
+router.post('/bookings/:id/decline-internal', async (req, res) => {
+    try {
+        const bookingId = parseInt(req.params.id, 10);
+        const result = await dispatchService.broadcastToPartners(bookingId);
+        res.json(result);
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
