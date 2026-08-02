@@ -427,6 +427,17 @@ function initWhatsAppClient() {
             // ask only for whatever's still missing (never re-asking what we already have).
             if (session.phase === 'collecting') {
                 const extracted = await nluService.extractTripDetails(body, session.slots, getCurrentVehicleTypes());
+
+                // An infrastructure failure (Gemini unreachable/timed out) is not the
+                // customer's fault - don't count it against the no-progress loop-guard,
+                // and be honest that we couldn't read their message rather than implying
+                // we understood it and just need more info.
+                if (extracted._apiError) {
+                    await sendTextMessage(fromPhone,
+                        `⚠️ Sorry, we're having trouble processing messages right now. Please resend your last message in a moment.`);
+                    return;
+                }
+
                 const gotSomething = applyExtractedSlots(session.slots, extracted);
 
                 const missing = missingSlotQuestions(session.slots);
@@ -554,6 +565,13 @@ function initWhatsAppClient() {
 
                 // Not a plain confirm or extra-KM number - treat as a correction
                 const extracted = await nluService.extractTripDetails(body, session.slots, getCurrentVehicleTypes());
+
+                if (extracted._apiError) {
+                    await sendTextMessage(fromPhone,
+                        `⚠️ Sorry, we're having trouble processing messages right now. Please resend your last message in a moment.`);
+                    return;
+                }
+
                 const routeChanged = (extracted.pickup && extracted.pickup !== session.slots.pickup) ||
                     (extracted.drop && extracted.drop !== session.slots.drop);
                 const changed = applyExtractedSlots(session.slots, extracted);

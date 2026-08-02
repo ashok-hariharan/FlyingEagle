@@ -18,6 +18,17 @@ const DEFAULT_VEHICLE_TYPES = [
     'Sedan (Dzire/Etios)', 'SUV (Ertiga)', 'Premium SUV (Innova Crysta)', 'Tempo Traveller (12 Seater)'
 ];
 
+// A transient network blip can otherwise leave fetch() hanging indefinitely (no default
+// timeout), which would silently stall the whole bot for that conversation - a plain
+// failure at least degrades gracefully via the existing try/catch fallbacks below.
+const GEMINI_TIMEOUT_MS = 10000;
+
+function fetchWithTimeout(url, options) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+}
+
 /**
  * Extracts outstation trip booking details from a customer's free-form WhatsApp message
  * using Gemini. Returns an object shaped like EMPTY_SLOTS (null for anything not mentioned).
@@ -50,7 +61,7 @@ Customer's latest message: "${message}"
 Respond with ONLY a raw JSON object with exactly these keys: customer_name, pickup, drop, trip_date_text, num_days, vehicle_type. No other text, no markdown formatting.`;
 
     try {
-        const res = await fetch(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+        const res = await fetchWithTimeout(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -61,12 +72,12 @@ Respond with ONLY a raw JSON object with exactly these keys: customer_name, pick
 
         if (!res.ok) {
             console.error(`[NLU] Gemini API error: HTTP ${res.status} ${await res.text()}`);
-            return { ...EMPTY_SLOTS };
+            return { ...EMPTY_SLOTS, _apiError: true };
         }
 
         const data = await res.json();
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) return { ...EMPTY_SLOTS };
+        if (!text) return { ...EMPTY_SLOTS, _apiError: true };
 
         const parsed = JSON.parse(text);
         return {
@@ -79,7 +90,10 @@ Respond with ONLY a raw JSON object with exactly these keys: customer_name, pick
         };
     } catch (err) {
         console.error('[NLU] Extraction failed:', err.message);
-        return { ...EMPTY_SLOTS };
+        // _apiError distinguishes "we couldn't even ask" from "Gemini looked and found
+        // nothing" - callers should not penalize the customer (e.g. via a no-progress
+        // loop-guard) for an infrastructure failure that wasn't their fault.
+        return { ...EMPTY_SLOTS, _apiError: true };
     }
 }
 
@@ -105,7 +119,7 @@ Message: "${message}"
 Respond with ONLY the single word YES or NO.`;
 
     try {
-        const res = await fetch(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+        const res = await fetchWithTimeout(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -160,7 +174,7 @@ Message: "${message}"
 Respond with ONLY a raw JSON object with exactly these keys: is_available, vehicle_type, vehicle_number, location. No other text.`;
 
     try {
-        const res = await fetch(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
+        const res = await fetchWithTimeout(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

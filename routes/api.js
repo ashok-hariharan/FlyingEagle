@@ -19,6 +19,20 @@ router.post('/whatsapp/disconnect', async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
+// 1d. Send an ad-hoc WhatsApp message to any phone/JID (customer follow-ups, corrections, etc.)
+router.post('/whatsapp/send', async (req, res) => {
+    try {
+        const { phone, message } = req.body;
+        if (!phone || !message) {
+            return res.status(400).json({ success: false, error: 'phone and message are required.' });
+        }
+        const result = await whatsappService.sendTextMessage(phone, message);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 router.post('/quick-quote', (req, res) => {
     try {
         const { vehicle_type, estimated_km, num_days, is_night_trip } = req.body;
