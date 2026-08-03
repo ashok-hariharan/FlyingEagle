@@ -337,17 +337,21 @@ router.delete('/rate-cards/:id', (req, res) => {
 // 8. Partners API
 router.get('/partners', (req, res) => {
     try {
-        const partners = db.prepare(`
-            SELECT p.*, a.is_available, a.vehicle_type as available_vehicle_type,
-                a.vehicle_number as available_vehicle_number, a.location as available_location,
-                a.reported_at as availability_reported_at
-            FROM partners p
-            LEFT JOIN partner_availability a ON a.partner_id = p.id
-            ORDER BY p.is_internal DESC, p.id ASC
-        `).all();
+        const partners = db.prepare(`SELECT * FROM partners ORDER BY is_internal DESC, id ASC`).all();
+        const availabilityRows = db.prepare(`SELECT * FROM partner_availability`).all();
+        const availabilityByPartner = new Map();
+        for (const row of availabilityRows) {
+            if (!availabilityByPartner.has(row.partner_id)) availabilityByPartner.set(row.partner_id, []);
+            availabilityByPartner.get(row.partner_id).push(row);
+        }
+
         const formatted = partners.map(p => ({
             ...p,
-            vehicles_offered: JSON.parse(p.vehicles_offered || '[]')
+            vehicles_offered: JSON.parse(p.vehicles_offered || '[]'),
+            // One entry per vehicle_type this partner has reported on (possibly none) -
+            // each carries its own is_available/date-window/location, since a report about
+            // one vehicle no longer overwrites the status of their other vehicle types.
+            availability: availabilityByPartner.get(p.id) || []
         }));
         res.json({ success: true, partners: formatted });
     } catch (error) {

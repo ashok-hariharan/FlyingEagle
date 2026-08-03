@@ -637,20 +637,38 @@ function timeAgo(dateStr) {
     return `${Math.floor(hours / 24)}d ago`;
 }
 
-function renderAvailabilityStatus(p) {
-    if (p.is_available === null || p.is_available === undefined) {
-        return `<span class="status-badge status-PENDING">⚪ No availability reported</span>`;
-    }
-    if (p.is_available) {
-        const details = [
-            p.available_vehicle_type,
-            p.available_location ? `@ ${p.available_location}` : null
-        ].filter(Boolean).join(' ');
-        return `<span class="status-badge status-CONFIRMED">🟢 Available${details ? ': ' + escapeHtml(details) : ''}</span> ` +
-            `<span style="font-size:0.75rem; color: var(--text-muted);">${timeAgo(p.availability_reported_at)}</span>`;
-    }
-    return `<span class="status-badge status-INTERNAL_OFFERED">🔴 Unavailable</span> ` +
-        `<span style="font-size:0.75rem; color: var(--text-muted);">${timeAgo(p.availability_reported_at)}</span>`;
+// One row per vehicle type this partner offers - not just the ones they've reported on -
+// so "Vehicles Offered" and "current status" are a single unified list instead of two
+// separately-styled, out-of-sync badge rows. A vehicle type with no report defaults to
+// available, matching the actual dispatch logic.
+function renderFleetStatus(p) {
+    const byType = new Map((p.availability || []).map(a => [a.vehicle_type, a]));
+
+    return p.vehicles_offered.map(vt => {
+        const a = byType.get(vt);
+
+        if (!a || a.is_available) {
+            const meta = a
+                ? `${a.location ? escapeHtml(a.location) + ' · ' : ''}${timeAgo(a.reported_at)}`
+                : 'no report on file';
+            return `
+                <div class="fleet-status-row">
+                    <span class="fleet-status-name">${escapeHtml(vt)}</span>
+                    <span class="fleet-status-pill fleet-status-available">🟢 Available</span>
+                    <span class="fleet-status-meta">${meta}</span>
+                </div>`;
+        }
+
+        const period = a.unavailable_from
+            ? (a.unavailable_from === a.unavailable_until ? `until ${a.unavailable_from}` : `${a.unavailable_from} → ${a.unavailable_until}`)
+            : 'until further notice';
+        return `
+            <div class="fleet-status-row">
+                <span class="fleet-status-name">${escapeHtml(vt)}</span>
+                <span class="fleet-status-pill fleet-status-unavailable">🔴 Unavailable</span>
+                <span class="fleet-status-meta">${escapeHtml(period)} · ${timeAgo(a.reported_at)}</span>
+            </div>`;
+    }).join('');
 }
 
 async function loadPartners() {
@@ -669,11 +687,8 @@ async function loadPartners() {
                 </div>
                 <div class="card-body">
                     <div>📱 <strong>WhatsApp:</strong> ${escapeHtml(p.phone)}</div>
-                    <div>🚕 <strong>Vehicles Offered:</strong></div>
-                    <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.3rem;">
-                        ${p.vehicles_offered.map(v => `<span class="status-badge status-CONFIRMED">${escapeHtml(v)}</span>`).join('')}
-                    </div>
-                    <div style="margin-top:0.5rem;">${renderAvailabilityStatus(p)}</div>
+                    <div class="fleet-status-label">🚕 Vehicle Fleet Status</div>
+                    <div class="fleet-status-list">${renderFleetStatus(p)}</div>
                 </div>
                 <div class="card-footer">
                     <div style="display:flex; gap:0.5rem;">

@@ -58,6 +58,18 @@ function parseTripDate(text) {
     };
 }
 
+// Parses a single natural-language date phrase (e.g. "today", "tomorrow", "12 aug") into
+// a plain YYYY-MM-DD string, for scoping a partner's unavailability report to specific
+// day(s) rather than "until further notice". Returns null if the phrase didn't parse.
+function parseAvailabilityDatePhrase(text) {
+    if (!text) return null;
+    const results = chrono.parse(text, new Date(), { forwardDate: true });
+    if (results.length === 0) return null;
+    const date = results[0].date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 // Merges freshly-extracted NLU fields into the session's slots. Returns true if anything changed.
 function applyExtractedSlots(slots, extracted) {
     let changed = false;
@@ -207,7 +219,7 @@ function initWhatsAppClient() {
             // A. Partner Accept Claim Check (e.g., "ACCEPT FL-2026-101" or "ACCEPT")
             // Matches both a tie-up broadcast (PARTNER_BROADCAST) and an own-fleet first-refusal offer (INTERNAL_OFFERED).
             if (body.toUpperCase().startsWith('ACCEPT') || body === '100') {
-                const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+                const partner = await findPartnerForSender(msg, fromPhone);
                 if (partner) {
                     let booking = null;
                     if (body.toUpperCase().startsWith('ACCEPT')) {
@@ -235,7 +247,7 @@ function initWhatsAppClient() {
             // If the OWN FLEET declines a first-refusal offer, release the trip to tie-up partners.
             // If a tie-up partner declines a broadcast, just acknowledge - the others are already offered it.
             if (body.toUpperCase().startsWith('DECLINE')) {
-                const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+                const partner = await findPartnerForSender(msg, fromPhone);
                 if (partner) {
                     const parts = body.split(' ');
                     let booking = null;
@@ -268,7 +280,7 @@ function initWhatsAppClient() {
             // A2. Partner Driver & Vehicle Details Submission
             // Format: "DRIVER <Booking Ref> | <Driver Name> | <Driver Phone> | <Vehicle Number>"
             if (body.toUpperCase().startsWith('DRIVER')) {
-                const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+                const partner = await findPartnerForSender(msg, fromPhone);
                 if (partner) {
                     const rest = body.slice('DRIVER'.length).trim();
                     const parts = rest.split('|').map(p => p.trim()).filter(Boolean);
@@ -303,31 +315,46 @@ function initWhatsAppClient() {
             // number is treated as a free-text availability report (e.g. "Sedan available
             // in Chennai today", "not available today"). No scheduled prompts - partners
             // update whenever their situation changes.
-            const reportingPartner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+            const reportingPartner = await findPartnerForSender(msg, fromPhone);
             if (reportingPartner) {
                 const avail = await nluService.extractAvailabilityUpdate(body, getCurrentVehicleTypes());
 
                 if (avail.is_available === null && !avail.vehicle_type && !avail.location) {
                     await sendTextMessage(fromPhone,
                         `👋 Hi ${reportingPartner.name}! To update your availability, just tell us, e.g.:\n` +
-                        `_"Sedan available in Chennai today"_ or _"not available today"_.`);
+                        `_"Sedan available in Chennai today"_ or _"Sedan not available today and tomorrow"_.`);
                     return;
                 }
 
-                const record = await availabilityService.reportAvailability(reportingPartner.id, avail);
+                const unavailableFrom = parseAvailabilityDatePhrase(avail.unavailable_from_text);
+                const unavailableUntil = parseAvailabilityDatePhrase(avail.unavailable_until_text) || unavailableFrom;
 
-                if (record.is_available) {
+                const records = await availabilityService.reportAvailability(reportingPartner.id, {
+                    is_available: avail.is_available,
+                    vehicle_type: avail.vehicle_type,
+                    vehicle_number: avail.vehicle_number,
+                    location: avail.location,
+                    unavailable_from: unavailableFrom,
+                    unavailable_until: unavailableUntil
+                });
+
+                const vehicleList = records.map(r => r.vehicle_type).join(', ');
+
+                if (avail.is_available) {
                     const details = [
-                        record.vehicle_type ? `Vehicle: *${record.vehicle_type}*` : null,
-                        record.vehicle_number ? `Reg: *${record.vehicle_number}*` : null,
-                        record.location ? `Location: *${record.location}*` : null
+                        vehicleList ? `Vehicle: *${vehicleList}*` : null,
+                        avail.vehicle_number ? `Reg: *${avail.vehicle_number}*` : null,
+                        avail.location ? `Location: *${avail.location}*` : null
                     ].filter(Boolean).join(' | ');
                     await sendTextMessage(fromPhone,
-                        `✅ Thanks ${reportingPartner.name}! Marked you *available*${details ? ` - ${details}` : ''}.\n` +
+                        `✅ Thanks ${reportingPartner.name}! Marked *${vehicleList}* *available*${details ? ` - ${details}` : ''}.\n` +
                         `We'll prioritize you for nearby trips. Reply anytime to update.`);
                 } else {
+                    const period = unavailableFrom
+                        ? (unavailableFrom === unavailableUntil ? ` on *${unavailableFrom}*` : ` from *${unavailableFrom}* to *${unavailableUntil}*`)
+                        : ' until further notice';
                     await sendTextMessage(fromPhone,
-                        `✅ Thanks ${reportingPartner.name}! Marked you *unavailable* - we won't send trip offers until you update us again.`);
+                        `✅ Thanks ${reportingPartner.name}! Marked *${vehicleList}* *unavailable*${period} - we won't send those trip offers during that time. Reply anytime to update.`);
                 }
                 return;
             }
@@ -725,6 +752,42 @@ async function resolveSenderPhone(msg) {
         return '+' + msg.from.replace('@c.us', '');
     }
     return msg.from;
+}
+
+// Looks up a partner by the sender's phone number. For an @lid sender, `fromPhone`
+// is an opaque privacy id with no relation to the real phone digits, so a direct
+// slice-and-match against it can never succeed - even though the sender may well be
+// a saved partner. In that case, resolve the real number via WhatsApp's own contact
+// data (this works precisely when the sender is saved as a contact on the phone
+// running the bot, which is what makes the @lid resolvable to begin with).
+async function findPartnerForSender(msg, fromPhone) {
+    const digits = fromPhone.replace(/[^0-9]/g, '');
+    if (digits.length >= 10) {
+        const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${digits.slice(-10)}%`);
+        if (partner) return partner;
+    }
+
+    if (fromPhone.includes('@lid')) {
+        try {
+            const contact = await msg.getContact();
+            // `contact.number` is unreliable for @lid senders - it can still hold the
+            // opaque lid id rather than the real phone number. `contact.id` is what
+            // WhatsApp itself resolves the saved contact to, so prefer that when it's
+            // a real c.us identity.
+            let realDigits = null;
+            if (contact && contact.id && contact.id.server === 'c.us' && contact.id.user) {
+                realDigits = contact.id.user.replace(/[^0-9]/g, '');
+            } else if (contact && contact.number) {
+                realDigits = contact.number.replace(/[^0-9]/g, '');
+            }
+            if (realDigits && realDigits.length >= 10) {
+                return db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${realDigits.slice(-10)}%`);
+            }
+        } catch (err) {
+            console.warn(`[WhatsApp Inbound] Could not resolve @lid sender ${fromPhone} to a real contact number:`, err.message);
+        }
+    }
+    return null;
 }
 
 initWhatsAppClient();

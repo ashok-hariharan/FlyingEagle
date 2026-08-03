@@ -23,9 +23,12 @@ async function broadcastToPartners(bookingId) {
         }
     });
 
-    // Skip partners who've explicitly reported unavailable, and offer to the nearest
-    // available ones first (partners with no report on file stay eligible by default).
-    const eligiblePartners = await availabilityService.filterAndRankPartners(vehicleMatches, booking.pickup_location);
+    // Skip partners who've explicitly reported this vehicle type unavailable for this trip's
+    // date, and offer to the nearest available ones first (partners with no report on file,
+    // or whose unavailable window doesn't cover this trip date, stay eligible by default).
+    const eligiblePartners = await availabilityService.filterAndRankPartners(
+        vehicleMatches, booking.pickup_location, booking.vehicle_type, booking.trip_start_date
+    );
 
     if (eligiblePartners.length === 0) {
         console.warn(`[Dispatch] No eligible tie-up partners found for vehicle type '${booking.vehicle_type}'.`);
@@ -89,7 +92,9 @@ async function offerToOwnFleet(bookingId) {
         }
     });
 
-    const eligibleFleet = await availabilityService.filterAndRankPartners(vehicleMatches, booking.pickup_location);
+    const eligibleFleet = await availabilityService.filterAndRankPartners(
+        vehicleMatches, booking.pickup_location, booking.vehicle_type, booking.trip_start_date
+    );
 
     if (eligibleFleet.length === 0) {
         console.warn(`[Dispatch] No own-fleet vehicle available for '${booking.vehicle_type}' - going straight to tie-up partners.`);
