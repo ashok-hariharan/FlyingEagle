@@ -67,22 +67,80 @@ function initDatabase() {
         insertPartner.run('Royal Outstation Cabs (Tie-up)', '+919443322110', 0, JSON.stringify(['Sedan (Dzire/Etios)', 'Premium SUV (Innova Crysta)']), 1);
     }
 
-    // 2b. Partner Availability Table - rolling current status per partner, upserted
-    // whenever a partner reports (no scheduled prompts; partners update anytime).
+    // 2b. Partner Availability Table - one row per (partner, vehicle_type), upserted
+    // whenever a partner reports (no scheduled prompts; partners update anytime), so a
+    // report about one vehicle never overwrites the status of their other vehicle types.
+    // An is_available=0 report can optionally be scoped to a date range (unavailable_from/
+    // unavailable_until) - outside that window, or with no report at all, a partner+vehicle
+    // combo is treated as available. No date range on an unavailable report means "until
+    // further notice".
     db.exec(`
         CREATE TABLE IF NOT EXISTS partner_availability (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            partner_id INTEGER NOT NULL UNIQUE,
+            partner_id INTEGER NOT NULL,
+            vehicle_type TEXT NOT NULL,
             is_available INTEGER NOT NULL DEFAULT 1,
-            vehicle_type TEXT,
             vehicle_number TEXT,
             location TEXT,
             location_lat REAL,
             location_lon REAL,
+            unavailable_from TEXT,
+            unavailable_until TEXT,
             reported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(partner_id, vehicle_type),
             FOREIGN KEY (partner_id) REFERENCES partners(id)
         );
     `);
+
+    // Migration: pre-existing databases had a single rolling row per partner (unique on
+    // partner_id alone, no vehicle_type scoping, no date range) - meaning a report about
+    // ONE vehicle type marked the partner's ENTIRE fleet unavailable indefinitely. Rebuild
+    // onto the per-vehicle-type + date-range schema above.
+    const availabilityCols = db.prepare(`PRAGMA table_info(partner_availability)`).all();
+    const hasLegacyAvailabilitySchema = availabilityCols.length > 0 && !availabilityCols.some(c => c.name === 'unavailable_from');
+    if (hasLegacyAvailabilitySchema) {
+        console.log('[Database] Migrating partner_availability to per-vehicle-type schema...');
+        db.exec(`ALTER TABLE partner_availability RENAME TO partner_availability_legacy`);
+        db.exec(`
+            CREATE TABLE partner_availability (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                partner_id INTEGER NOT NULL,
+                vehicle_type TEXT NOT NULL,
+                is_available INTEGER NOT NULL DEFAULT 1,
+                vehicle_number TEXT,
+                location TEXT,
+                location_lat REAL,
+                location_lon REAL,
+                unavailable_from TEXT,
+                unavailable_until TEXT,
+                reported_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(partner_id, vehicle_type),
+                FOREIGN KEY (partner_id) REFERENCES partners(id)
+            );
+        `);
+        const legacyRows = db.prepare('SELECT * FROM partner_availability_legacy').all();
+        const insertMigrated = db.prepare(`
+            INSERT OR IGNORE INTO partner_availability
+                (partner_id, vehicle_type, is_available, vehicle_number, location, location_lat, location_lon, reported_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const row of legacyRows) {
+            // A legacy row sometimes had a specific vehicle_type captured, sometimes not.
+            // Best-effort: keep it scoped if we have one, otherwise fan it out across
+            // everything that partner offers (matching the old blanket behavior on migration,
+            // rather than silently dropping the report).
+            let vehicleTypes = row.vehicle_type ? [row.vehicle_type] : [];
+            if (vehicleTypes.length === 0) {
+                const partner = db.prepare('SELECT vehicles_offered FROM partners WHERE id = ?').get(row.partner_id);
+                try { vehicleTypes = JSON.parse(partner?.vehicles_offered || '[]'); } catch (e) { vehicleTypes = []; }
+            }
+            for (const vt of vehicleTypes) {
+                insertMigrated.run(row.partner_id, vt, row.is_available, row.vehicle_number, row.location, row.location_lat, row.location_lon, row.reported_at);
+            }
+        }
+        db.exec(`DROP TABLE partner_availability_legacy`);
+        console.log(`[Database] Migrated ${legacyRows.length} legacy availability record(s).`);
+    }
 
     // 3. Bookings Table
     db.exec(`

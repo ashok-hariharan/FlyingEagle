@@ -2,11 +2,20 @@ const db = require('../config/database');
 const distanceService = require('./distance');
 
 /**
- * Records/updates a partner's current availability status (rolling upsert - one row
- * per partner). Attempts to geocode the location for later proximity ranking; if
- * geocoding fails or isn't configured, the report is still stored without coordinates.
+ * Records/updates a partner's availability (one row per partner+vehicle_type - upserted
+ * whenever they report). If no specific vehicle_type is mentioned in their message, the
+ * update is applied to every vehicle type that partner offers, so a plain "not available
+ * today" still covers their whole fleet - but a message naming one vehicle only ever
+ * touches that vehicle's status, never their others.
+ *
+ * unavailable_from/unavailable_until (YYYY-MM-DD, or null) scope how long an
+ * is_available=false report holds: outside that window the partner+vehicle combo goes back
+ * to being treated as available. Leaving both null on an unavailable report means "until
+ * further notice" (matches a partner who didn't mention any dates at all).
+ *
+ * Returns the array of records touched (usually one, more if fanned out across a fleet).
  */
-async function reportAvailability(partnerId, { is_available, vehicle_type, vehicle_number, location }) {
+async function reportAvailability(partnerId, { is_available, vehicle_type, vehicle_number, location, unavailable_from, unavailable_until }) {
     let lat = null;
     let lon = null;
 
@@ -20,23 +29,37 @@ async function reportAvailability(partnerId, { is_available, vehicle_type, vehic
         }
     }
 
-    const existing = db.prepare('SELECT id FROM partner_availability WHERE partner_id = ?').get(partnerId);
-
-    if (existing) {
-        db.prepare(`
-            UPDATE partner_availability
-            SET is_available = ?, vehicle_type = ?, vehicle_number = ?, location = ?,
-                location_lat = ?, location_lon = ?, reported_at = CURRENT_TIMESTAMP
-            WHERE partner_id = ?
-        `).run(is_available ? 1 : 0, vehicle_type || null, vehicle_number || null, location || null, lat, lon, partnerId);
-    } else {
-        db.prepare(`
-            INSERT INTO partner_availability (partner_id, is_available, vehicle_type, vehicle_number, location, location_lat, location_lon)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(partnerId, is_available ? 1 : 0, vehicle_type || null, vehicle_number || null, location || null, lat, lon);
+    let vehicleTypes = vehicle_type ? [vehicle_type] : [];
+    if (vehicleTypes.length === 0) {
+        const partner = db.prepare('SELECT vehicles_offered FROM partners WHERE id = ?').get(partnerId);
+        try { vehicleTypes = JSON.parse(partner?.vehicles_offered || '[]'); } catch (e) { vehicleTypes = []; }
     }
 
-    return db.prepare('SELECT * FROM partner_availability WHERE partner_id = ?').get(partnerId);
+    // A date range only means anything for an unavailable report - an "available" report
+    // has no window to expire out of.
+    const fromDate = is_available ? null : (unavailable_from || null);
+    const untilDate = is_available ? null : (unavailable_until || null);
+
+    const upsert = db.prepare(`
+        INSERT INTO partner_availability
+            (partner_id, vehicle_type, is_available, vehicle_number, location, location_lat, location_lon, unavailable_from, unavailable_until, reported_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(partner_id, vehicle_type) DO UPDATE SET
+            is_available = excluded.is_available,
+            vehicle_number = excluded.vehicle_number,
+            location = excluded.location,
+            location_lat = excluded.location_lat,
+            location_lon = excluded.location_lon,
+            unavailable_from = excluded.unavailable_from,
+            unavailable_until = excluded.unavailable_until,
+            reported_at = CURRENT_TIMESTAMP
+    `);
+    const selectOne = db.prepare('SELECT * FROM partner_availability WHERE partner_id = ? AND vehicle_type = ?');
+
+    return vehicleTypes.map(vt => {
+        upsert.run(partnerId, vt, is_available ? 1 : 0, vehicle_number || null, location || null, lat, lon, fromDate, untilDate);
+        return selectOne.get(partnerId, vt);
+    });
 }
 
 // Haversine straight-line distance (KM) between two [lon, lat] coordinate pairs.
@@ -52,19 +75,34 @@ function haversineDistanceKm([lon1, lat1], [lon2, lat2]) {
 }
 
 /**
- * Filters out partners explicitly marked unavailable (no report on file = still
- * eligible, per the "treat as available until they say otherwise" default), then
- * sorts the rest nearest-first to the pickup location when we have coordinates for
- * both sides. Partners with no location on file keep their original relative order,
- * placed after any partner we could actually rank.
+ * Filters out partners explicitly marked unavailable for the requested vehicle type on the
+ * given trip date, then sorts the rest nearest-first to the pickup location when we have
+ * coordinates for both sides. A partner stays eligible when: there's no availability report
+ * on file for that vehicle type at all, the report says available, or the report's
+ * unavailable date window doesn't cover the trip date. Partners with no location on file
+ * keep their original relative order, placed after any partner we could actually rank.
  */
-async function filterAndRankPartners(partners, pickupLocation) {
-    const availability = db.prepare('SELECT * FROM partner_availability').all();
+async function filterAndRankPartners(partners, pickupLocation, vehicleType, tripDate) {
+    const tripDateOnly = tripDate ? String(tripDate).slice(0, 10) : null; // YYYY-MM-DD
+
+    const availability = vehicleType
+        ? db.prepare('SELECT * FROM partner_availability WHERE vehicle_type = ?').all(vehicleType)
+        : [];
     const byPartnerId = new Map(availability.map(a => [a.partner_id, a]));
 
     const eligible = partners.filter(p => {
         const a = byPartnerId.get(p.id);
-        return !a || a.is_available; // no record on file -> still eligible
+        if (!a || a.is_available) return true; // no report for this vehicle type, or reported available
+
+        // Reported unavailable - only exclude if the trip date actually falls inside their
+        // stated window. No window at all ("until further notice") always excludes; if we
+        // don't know the trip date to compare against, be conservative and exclude too.
+        if (!a.unavailable_from && !a.unavailable_until) return false;
+        if (!tripDateOnly) return false;
+
+        if (a.unavailable_from && tripDateOnly < a.unavailable_from) return true;
+        if (a.unavailable_until && tripDateOnly > a.unavailable_until) return true;
+        return false; // falls within the unavailable window
     });
 
     let pickupCoords = null;

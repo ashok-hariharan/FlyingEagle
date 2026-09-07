@@ -58,6 +58,18 @@ function parseTripDate(text) {
     };
 }
 
+// Parses a single natural-language date phrase (e.g. "today", "tomorrow", "12 aug") into
+// a plain YYYY-MM-DD string, for scoping a partner's unavailability report to specific
+// day(s) rather than "until further notice". Returns null if the phrase didn't parse.
+function parseAvailabilityDatePhrase(text) {
+    if (!text) return null;
+    const results = chrono.parse(text, new Date(), { forwardDate: true });
+    if (results.length === 0) return null;
+    const date = results[0].date();
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 // Merges freshly-extracted NLU fields into the session's slots. Returns true if anything changed.
 function applyExtractedSlots(slots, extracted) {
     let changed = false;
@@ -75,6 +87,14 @@ function applyExtractedSlots(slots, extracted) {
         }
     }
     return changed;
+}
+
+// Strips common self-introduction framing ("My name is X", "I'm X", "Call me X") down to
+// just the name itself; returns the trimmed text as-is if no such framing is present (a
+// bare reply like "Tampo" already IS just the name).
+function extractPlainNameReply(text) {
+    const stripped = text.trim().replace(/^(my name is|i am|i'm|it'?s|this is|name is|call me)\s+/i, '').trim();
+    return stripped || text.trim();
 }
 
 function missingSlotQuestions(slots) {
@@ -102,9 +122,16 @@ function summaryMessage(session, quote) {
 
 // Auto-calculates distance from the route and, on success, goes straight to the single
 // final confirmation summary (no separate distance-only confirmation step). Falls back
-// to asking for manual KM entry only when auto-calculation itself fails.
-async function finalizeTripDetails(fromPhone, session) {
-    const routeDistance = await distanceService.calculateRouteDistance(session.slots.pickup, session.slots.drop);
+// to asking for manual KM entry only when auto-calculation itself fails. Reuses
+// session.pickupCoords/dropCoords when checkLocationsAndFinalize has already resolved
+// (and possibly had the customer confirm) them, rather than geocoding the text again.
+// isUpdate prefixes messages with "Updated!" for the route-change-correction path.
+async function finalizeTripDetails(fromPhone, session, isUpdate = false) {
+    const routeDistance = (session.pickupCoords && session.dropCoords)
+        ? await distanceService.calculateRouteDistanceFromCoords(session.pickupCoords, session.dropCoords)
+        : await distanceService.calculateRouteDistance(session.slots.pickup, session.slots.drop);
+
+    const prefix = isUpdate ? 'Updated! ' : '';
 
     if (routeDistance.success) {
         session.calculated_distance_km = routeDistance.distance_km;
@@ -118,15 +145,62 @@ async function finalizeTripDetails(fromPhone, session) {
         });
         session.pendingQuote = quote;
 
-        await sendTextMessage(fromPhone, summaryMessage(session, quote));
+        await sendTextMessage(fromPhone, prefix + summaryMessage(session, quote));
     } else {
         console.warn(`[WhatsApp Bot] Distance auto-calc failed for "${session.slots.pickup}" -> "${session.slots.drop}": ${routeDistance.error}`);
         session.calculated_distance_km = null;
         session.phase = 'distance';
         await sendTextMessage(fromPhone,
-            `What is the *estimated total distance* for this trip (in KM)?\n` +
+            `${prefix}What is the *estimated total distance* for this trip (in KM)?\n` +
             `_(We couldn't auto-calculate this route - if you're unsure, reply *0* and we'll use 300 KM/day as standard)_`);
     }
+}
+
+// Resolves pickup & drop, and only interrupts the flow to ask the customer to confirm a
+// PIN code when a location name is genuinely ambiguous (e.g. a locality that exists in more
+// than one real place - see distanceService.resolveLocation) - otherwise goes straight to
+// the normal final summary, same as before this check existed. isUpdate prefixes messages
+// with "Updated!" for the route-change-correction path.
+async function checkLocationsAndFinalize(fromPhone, session, isUpdate = false) {
+    let pickupResult, dropResult;
+    try {
+        [pickupResult, dropResult] = await Promise.all([
+            distanceService.resolveLocation(session.slots.pickup),
+            distanceService.resolveLocation(session.slots.drop)
+        ]);
+    } catch (err) {
+        console.warn(`[WhatsApp Bot] Location resolution failed for "${session.slots.pickup}" / "${session.slots.drop}": ${err.message}`);
+        session.pickupCoords = null;
+        session.dropCoords = null;
+        return await finalizeTripDetails(fromPhone, session, isUpdate); // falls back to its own manual-KM path
+    }
+
+    session.pickupCoords = pickupResult.coords;
+    session.dropCoords = dropResult.coords;
+
+    if (!pickupResult.ambiguous && !dropResult.ambiguous) {
+        await finalizeTripDetails(fromPhone, session, isUpdate);
+        return;
+    }
+
+    const routeResult = await distanceService.calculateRouteDistanceFromCoords(pickupResult.coords, dropResult.coords);
+    const [pickupPincode, dropPincode] = await Promise.all([
+        distanceService.getPincode(pickupResult.coords),
+        distanceService.getPincode(dropResult.coords)
+    ]);
+
+    session.phase = 'pincode_confirm';
+
+    const distanceLine = routeResult.success
+        ? `*Expected distance*: ${routeResult.distance_km} KM`
+        : `_(Couldn't auto-calculate the distance for this route yet - we'll ask for it manually once the areas below are confirmed)_`;
+
+    await sendTextMessage(fromPhone,
+        `${isUpdate ? 'Updated! ' : ''}📍 *Quick check before I calculate your fare* - one of these place names exists in more than one area, so I want to make sure I've got the right one:\n\n` +
+        `➤ *Pickup*: ${session.slots.pickup}${pickupPincode ? ` - PIN *${pickupPincode}*` : ''}\n` +
+        `➤ *Drop*: ${session.slots.drop}${dropPincode ? ` - PIN *${dropPincode}*` : ''}\n\n` +
+        `${distanceLine}\n\n` +
+        `Reply *YES* if this is correct, or tell us the correct pickup/drop area.`);
 }
 
 function initWhatsAppClient() {
@@ -207,7 +281,7 @@ function initWhatsAppClient() {
             // A. Partner Accept Claim Check (e.g., "ACCEPT FL-2026-101" or "ACCEPT")
             // Matches both a tie-up broadcast (PARTNER_BROADCAST) and an own-fleet first-refusal offer (INTERNAL_OFFERED).
             if (body.toUpperCase().startsWith('ACCEPT') || body === '100') {
-                const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+                const partner = await findPartnerForSender(msg, fromPhone);
                 if (partner) {
                     let booking = null;
                     if (body.toUpperCase().startsWith('ACCEPT')) {
@@ -235,7 +309,7 @@ function initWhatsAppClient() {
             // If the OWN FLEET declines a first-refusal offer, release the trip to tie-up partners.
             // If a tie-up partner declines a broadcast, just acknowledge - the others are already offered it.
             if (body.toUpperCase().startsWith('DECLINE')) {
-                const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+                const partner = await findPartnerForSender(msg, fromPhone);
                 if (partner) {
                     const parts = body.split(' ');
                     let booking = null;
@@ -268,7 +342,7 @@ function initWhatsAppClient() {
             // A2. Partner Driver & Vehicle Details Submission
             // Format: "DRIVER <Booking Ref> | <Driver Name> | <Driver Phone> | <Vehicle Number>"
             if (body.toUpperCase().startsWith('DRIVER')) {
-                const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+                const partner = await findPartnerForSender(msg, fromPhone);
                 if (partner) {
                     const rest = body.slice('DRIVER'.length).trim();
                     const parts = rest.split('|').map(p => p.trim()).filter(Boolean);
@@ -303,31 +377,46 @@ function initWhatsAppClient() {
             // number is treated as a free-text availability report (e.g. "Sedan available
             // in Chennai today", "not available today"). No scheduled prompts - partners
             // update whenever their situation changes.
-            const reportingPartner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${fromPhone.slice(-10)}%`);
+            const reportingPartner = await findPartnerForSender(msg, fromPhone);
             if (reportingPartner) {
                 const avail = await nluService.extractAvailabilityUpdate(body, getCurrentVehicleTypes());
 
                 if (avail.is_available === null && !avail.vehicle_type && !avail.location) {
                     await sendTextMessage(fromPhone,
                         `👋 Hi ${reportingPartner.name}! To update your availability, just tell us, e.g.:\n` +
-                        `_"Sedan available in Chennai today"_ or _"not available today"_.`);
+                        `_"Sedan available in Chennai today"_ or _"Sedan not available today and tomorrow"_.`);
                     return;
                 }
 
-                const record = await availabilityService.reportAvailability(reportingPartner.id, avail);
+                const unavailableFrom = parseAvailabilityDatePhrase(avail.unavailable_from_text);
+                const unavailableUntil = parseAvailabilityDatePhrase(avail.unavailable_until_text) || unavailableFrom;
 
-                if (record.is_available) {
+                const records = await availabilityService.reportAvailability(reportingPartner.id, {
+                    is_available: avail.is_available,
+                    vehicle_type: avail.vehicle_type,
+                    vehicle_number: avail.vehicle_number,
+                    location: avail.location,
+                    unavailable_from: unavailableFrom,
+                    unavailable_until: unavailableUntil
+                });
+
+                const vehicleList = records.map(r => r.vehicle_type).join(', ');
+
+                if (avail.is_available) {
                     const details = [
-                        record.vehicle_type ? `Vehicle: *${record.vehicle_type}*` : null,
-                        record.vehicle_number ? `Reg: *${record.vehicle_number}*` : null,
-                        record.location ? `Location: *${record.location}*` : null
+                        vehicleList ? `Vehicle: *${vehicleList}*` : null,
+                        avail.vehicle_number ? `Reg: *${avail.vehicle_number}*` : null,
+                        avail.location ? `Location: *${avail.location}*` : null
                     ].filter(Boolean).join(' | ');
                     await sendTextMessage(fromPhone,
-                        `✅ Thanks ${reportingPartner.name}! Marked you *available*${details ? ` - ${details}` : ''}.\n` +
+                        `✅ Thanks ${reportingPartner.name}! Marked *${vehicleList}* *available*${details ? ` - ${details}` : ''}.\n` +
                         `We'll prioritize you for nearby trips. Reply anytime to update.`);
                 } else {
+                    const period = unavailableFrom
+                        ? (unavailableFrom === unavailableUntil ? ` on *${unavailableFrom}*` : ` from *${unavailableFrom}* to *${unavailableUntil}*`)
+                        : ' until further notice';
                     await sendTextMessage(fromPhone,
-                        `✅ Thanks ${reportingPartner.name}! Marked you *unavailable* - we won't send trip offers until you update us again.`);
+                        `✅ Thanks ${reportingPartner.name}! Marked *${vehicleList}* *unavailable*${period} - we won't send those trip offers during that time. Reply anytime to update.`);
                 }
                 return;
             }
@@ -391,7 +480,7 @@ function initWhatsAppClient() {
                 }
 
                 await sendTextMessage(fromPhone, intro);
-                await finalizeTripDetails(fromPhone, newSession);
+                await checkLocationsAndFinalize(fromPhone, newSession);
                 return;
             }
 
@@ -426,6 +515,27 @@ function initWhatsAppClient() {
             // Phase: collecting - extract whatever we can from the customer's message, and
             // ask only for whatever's still missing (never re-asking what we already have).
             if (session.phase === 'collecting') {
+                // When the customer's *name* is the only thing we're still waiting on, treat
+                // a short plain reply as the name directly, bypassing AI extraction entirely
+                // for this message. This matters because an unusual/short name can otherwise
+                // get misread by the AI as something else it phonetically resembles (e.g.
+                // "Tampo" matched to the "Tempo Traveller" vehicle type) - silently corrupting
+                // an already-correct field while the name itself never gets captured, so the
+                // bot just keeps re-asking. A customer answering "What is your name?" is
+                // authoritative regardless of how unusual the name looks.
+                const missingBeforeThisMessage = missingSlotQuestions(session.slots);
+                const onlyNameWasMissing = missingBeforeThisMessage.length === 1 &&
+                    missingBeforeThisMessage[0].toLowerCase().includes('name');
+                const reply = body.trim();
+                const looksLikeAPlainReply = reply.length > 0 && reply.length <= 40 && !/\d/.test(reply);
+
+                if (onlyNameWasMissing && looksLikeAPlainReply) {
+                    session.slots.customer_name = extractPlainNameReply(reply);
+                    session.noProgressCount = 0;
+                    await checkLocationsAndFinalize(fromPhone, session);
+                    return;
+                }
+
                 const extracted = await nluService.extractTripDetails(body, session.slots, getCurrentVehicleTypes());
 
                 // An infrastructure failure (Gemini unreachable/timed out) is not the
@@ -460,7 +570,41 @@ function initWhatsAppClient() {
                     return;
                 }
 
-                await finalizeTripDetails(fromPhone, session);
+                await checkLocationsAndFinalize(fromPhone, session);
+                return;
+            }
+
+            // Phase: pincode_confirm - only reached when checkLocationsAndFinalize flagged
+            // the pickup and/or drop as a genuinely ambiguous place name. A YES trusts the
+            // PIN code(s) and distance just shown and moves on; anything else is treated as
+            // a correction to the pickup/drop text, re-checked the same way before trying
+            // again (so a second ambiguous guess doesn't slip through unconfirmed).
+            if (session.phase === 'pincode_confirm') {
+                const reply = body.trim().toLowerCase();
+                const isYes = ['yes', 'y', 'confirm', 'correct', 'ok', 'okay'].includes(reply);
+
+                if (isYes) {
+                    await finalizeTripDetails(fromPhone, session);
+                    return;
+                }
+
+                const extracted = await nluService.extractTripDetails(body, session.slots, getCurrentVehicleTypes());
+                if (extracted._apiError) {
+                    await sendTextMessage(fromPhone,
+                        `⚠️ Sorry, we're having trouble processing messages right now. Please resend your last message in a moment.`);
+                    return;
+                }
+
+                const changed = applyExtractedSlots(session.slots, extracted);
+                if (!changed) {
+                    await abortBookingSession(fromPhone,
+                        `I didn't catch a correction there. Please reply *YES* to confirm the areas above, or clearly tell us the correct pickup/drop area.`);
+                    return;
+                }
+
+                session.pickupCoords = null;
+                session.dropCoords = null;
+                await checkLocationsAndFinalize(fromPhone, session);
                 return;
             }
 
@@ -583,28 +727,12 @@ function initWhatsAppClient() {
                 }
 
                 if (routeChanged) {
-                    // Route changed - recalculate distance and go straight back to the single
-                    // combined confirmation (falls back to asking for manual KM only if the
-                    // new route can't be auto-calculated).
-                    const routeDistance = await distanceService.calculateRouteDistance(session.slots.pickup, session.slots.drop);
-                    if (routeDistance.success) {
-                        session.calculated_distance_km = routeDistance.distance_km;
-                        session.estimated_km = routeDistance.distance_km;
-                        session.phase = 'confirming';
-
-                        const quote = tariffService.calculateTariff({
-                            vehicle_type: session.slots.vehicle_type,
-                            estimated_km: session.estimated_km,
-                            num_days: session.slots.num_days
-                        });
-                        session.pendingQuote = quote;
-                        await sendTextMessage(fromPhone, `Updated! ${summaryMessage(session, quote)}`);
-                    } else {
-                        session.calculated_distance_km = null;
-                        session.phase = 'distance';
-                        await sendTextMessage(fromPhone,
-                            `Updated! What is the *estimated total distance* for this new route (in KM)?`);
-                    }
+                    // Route changed - re-check for ambiguous place names (same as the initial
+                    // booking flow) before recalculating distance and going back to the single
+                    // combined confirmation.
+                    session.pickupCoords = null;
+                    session.dropCoords = null;
+                    await checkLocationsAndFinalize(fromPhone, session, true);
                     return;
                 }
 
@@ -725,6 +853,42 @@ async function resolveSenderPhone(msg) {
         return '+' + msg.from.replace('@c.us', '');
     }
     return msg.from;
+}
+
+// Looks up a partner by the sender's phone number. For an @lid sender, `fromPhone`
+// is an opaque privacy id with no relation to the real phone digits, so a direct
+// slice-and-match against it can never succeed - even though the sender may well be
+// a saved partner. In that case, resolve the real number via WhatsApp's own contact
+// data (this works precisely when the sender is saved as a contact on the phone
+// running the bot, which is what makes the @lid resolvable to begin with).
+async function findPartnerForSender(msg, fromPhone) {
+    const digits = fromPhone.replace(/[^0-9]/g, '');
+    if (digits.length >= 10) {
+        const partner = db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${digits.slice(-10)}%`);
+        if (partner) return partner;
+    }
+
+    if (fromPhone.includes('@lid')) {
+        try {
+            const contact = await msg.getContact();
+            // `contact.number` is unreliable for @lid senders - it can still hold the
+            // opaque lid id rather than the real phone number. `contact.id` is what
+            // WhatsApp itself resolves the saved contact to, so prefer that when it's
+            // a real c.us identity.
+            let realDigits = null;
+            if (contact && contact.id && contact.id.server === 'c.us' && contact.id.user) {
+                realDigits = contact.id.user.replace(/[^0-9]/g, '');
+            } else if (contact && contact.number) {
+                realDigits = contact.number.replace(/[^0-9]/g, '');
+            }
+            if (realDigits && realDigits.length >= 10) {
+                return db.prepare('SELECT * FROM partners WHERE phone LIKE ?').get(`%${realDigits.slice(-10)}%`);
+            }
+        } catch (err) {
+            console.warn(`[WhatsApp Inbound] Could not resolve @lid sender ${fromPhone} to a real contact number:`, err.message);
+        }
+    }
+    return null;
 }
 
 initWhatsAppClient();

@@ -12,7 +12,7 @@ A B2B fleet booking and automated dispatch platform for outstation car rentals. 
    - Distance is auto-calculated from the pickup/drop text via **OpenRouteService**, then confirmed in a single final summary alongside the fare - no separate back-and-forth for distance.
 2. **Own-Fleet-First Dispatch**:
    - A confirmed booking is offered to your own fleet first via WhatsApp ACCEPT/DECLINE. Only on an explicit decline (or if no internal vehicle covers that category) does it broadcast to tie-up partners.
-   - Partners can report their **live availability and location** in free text (*"Sedan available in Chennai today"*) - unavailable partners are skipped, and available ones are offered nearest-first.
+   - Partners can report their **live availability and location** in free text (*"Sedan not available today and tomorrow"*) - each report is scoped to the specific vehicle type and date(s) mentioned, so one vehicle being down never blocks the rest of that partner's fleet. Unavailable partners are skipped only for matching trips within that window; available ones are offered nearest-first.
    - Partner driver-detail replies require the booking reference, so a partner juggling multiple trips can't misassign a driver.
 3. **Dynamic Vehicle-Type Catalog**:
    - Vehicle types aren't hardcoded - add new ones (with a description) or edit existing rates from the dashboard, and every booking surface (WhatsApp bot, admin dashboard, public customer page) picks them up immediately.
@@ -134,7 +134,7 @@ Reply CONFIRM if everything looks correct, or tell me what needs to change.
 Reply `CONFIRM` to lock it in - dispatch automatically offers it to your own fleet first, falling back to tie-up partners on decline.
 
 ### Partners (own fleet & tie-up)
-- **Report availability, anytime, free text**: *"Sedan available in Chennai today"* or *"not available today"* - no fixed schedule of prompts, update whenever your situation changes.
+- **Report availability, anytime, free text**: *"Sedan available in Chennai today"* or *"Sedan not available today and tomorrow"* - no fixed schedule of prompts, update whenever your situation changes. A report only affects the vehicle type and date(s) named; leaving out a date makes it open-ended ("until further notice"), and every other vehicle you offer stays unaffected.
 - **Accept/decline a trip offer**: `ACCEPT FL-2026-101` / `DECLINE FL-2026-101` (or just `ACCEPT`/`DECLINE` for your most recent open offer).
 - **Submit driver & vehicle details** (include the booking ref if you have multiple active trips):
   ```

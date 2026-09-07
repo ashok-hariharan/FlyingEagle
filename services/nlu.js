@@ -47,7 +47,7 @@ async function extractTripDetails(message, knownSlots = {}, vehicleTypes = DEFAU
     const prompt = `You are extracting structured outstation car-trip booking details from a customer's WhatsApp message for an Indian cab rental service.
 
 Extract these fields ONLY if mentioned in the customer's LATEST message below:
-- customer_name: the customer's name, or null
+- customer_name: the customer's name, or null. Accept ANY name they give as-is, however short, unusual, or informal it looks (nicknames, single words, non-standard spellings) - never reject a name just because it doesn't "look like" a typical one. If "customer_name" is still missing from "Already known" below and the customer's latest message is just a short, plain reply with no other trip details in it, that reply is almost certainly them answering with their name - extract it as customer_name.
 - pickup: pickup location, or null
 - drop: drop-off location, or null
 - trip_date_text: the date/time exactly as the customer phrased it (e.g. "this friday", "10 aug 6am", "tomorrow"), or null
@@ -146,15 +146,22 @@ const EMPTY_AVAILABILITY = {
     is_available: null,
     vehicle_type: null,
     vehicle_number: null,
-    location: null
+    location: null,
+    unavailable_from_text: null,
+    unavailable_until_text: null
 };
 
 /**
  * Extracts a partner's availability report from a free-form WhatsApp message
- * (e.g. "Sedan available in Chennai today", "not available today", "innova free
- * in Trichy, TN09CB1234"). Returns an object shaped like EMPTY_AVAILABILITY.
+ * (e.g. "Sedan available in Chennai today", "not available today and tomorrow",
+ * "innova free in Trichy, TN09CB1234"). Returns an object shaped like EMPTY_AVAILABILITY.
  * is_available is null when the message doesn't look like an availability report
  * at all (e.g. a greeting), true/false when it clearly does.
+ *
+ * unavailable_from_text/unavailable_until_text carry the natural-language date phrase(s)
+ * for how long an is_available=false report applies (e.g. "today", "tomorrow") - the
+ * caller resolves these to real dates. Leaving both null means the partner didn't scope
+ * it to any particular date(s) at all.
  */
 async function extractAvailabilityUpdate(message, vehicleTypes = DEFAULT_VEHICLE_TYPES) {
     if (!GEMINI_API_KEY) {
@@ -165,13 +172,20 @@ async function extractAvailabilityUpdate(message, vehicleTypes = DEFAULT_VEHICLE
 
 Extract these fields:
 - is_available: true if they're reporting a vehicle IS available, false if they're reporting NOT available / no vehicle free, or null if the message doesn't look like an availability report at all (e.g. a greeting, unrelated question)
-- vehicle_type: their vehicle, mapped to the EXACT matching string from this list: ${JSON.stringify(vehicleTypes)} - or null if not mentioned or none are a reasonable match
+- vehicle_type: their vehicle, mapped to the EXACT matching string from this list: ${JSON.stringify(vehicleTypes)} - or null if not mentioned or none are a reasonable match (a null vehicle_type means the report applies to ALL vehicles this partner offers, so only map to a specific type when the message clearly names one)
 - vehicle_number: the vehicle registration number if mentioned, or null
 - location: the city/place they say the vehicle is currently at, or null if not mentioned
+- unavailable_from_text: ONLY when is_available is false - the start of the unavailable period exactly as phrased (e.g. "today", "tomorrow", "12 aug"), or null if no date was mentioned at all
+- unavailable_until_text: ONLY when is_available is false - the end of the unavailable period exactly as phrased (e.g. "tomorrow", "sunday"), or null if only one day was mentioned or no date was mentioned
+
+Examples:
+- "sedan not available today and tomorrow" -> is_available: false, vehicle_type: (sedan match), unavailable_from_text: "today", unavailable_until_text: "tomorrow"
+- "not available today" -> is_available: false, unavailable_from_text: "today", unavailable_until_text: null
+- "not available" (no date at all) -> is_available: false, unavailable_from_text: null, unavailable_until_text: null
 
 Message: "${message}"
 
-Respond with ONLY a raw JSON object with exactly these keys: is_available, vehicle_type, vehicle_number, location. No other text.`;
+Respond with ONLY a raw JSON object with exactly these keys: is_available, vehicle_type, vehicle_number, location, unavailable_from_text, unavailable_until_text. No other text.`;
 
     try {
         const res = await fetchWithTimeout(`${GEMINI_BASE}/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_API_KEY)}`, {
@@ -197,7 +211,9 @@ Respond with ONLY a raw JSON object with exactly these keys: is_available, vehic
             is_available: typeof parsed.is_available === 'boolean' ? parsed.is_available : null,
             vehicle_type: vehicleTypes.includes(parsed.vehicle_type) ? parsed.vehicle_type : null,
             vehicle_number: parsed.vehicle_number || null,
-            location: parsed.location || null
+            location: parsed.location || null,
+            unavailable_from_text: parsed.unavailable_from_text || null,
+            unavailable_until_text: parsed.unavailable_until_text || null
         };
     } catch (err) {
         console.error('[NLU] Availability extraction failed:', err.message);
