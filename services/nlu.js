@@ -47,7 +47,7 @@ async function extractTripDetails(message, knownSlots = {}, vehicleTypes = DEFAU
     const prompt = `You are extracting structured outstation car-trip booking details from a customer's WhatsApp message for an Indian cab rental service.
 
 Extract these fields ONLY if mentioned in the customer's LATEST message below:
-- customer_name: the customer's name, or null
+- customer_name: the customer's name, or null. Accept ANY name they give as-is, however short, unusual, or informal it looks (nicknames, single words, non-standard spellings) - never reject a name just because it doesn't "look like" a typical one. If "customer_name" is still missing from "Already known" below and the customer's latest message is just a short, plain reply with no other trip details in it, that reply is almost certainly them answering with their name - extract it as customer_name.
 - pickup: pickup location, or null
 - drop: drop-off location, or null
 - trip_date_text: the date/time exactly as the customer phrased it (e.g. "this friday", "10 aug 6am", "tomorrow"), or null
